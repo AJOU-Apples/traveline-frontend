@@ -14,7 +14,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.travelinefrontend"
+      "bundleIdentifier": "com.anonymous.travelinefrontend",
+      "config": {
+        "googleMapsApiKey": "AIzaSyCoD_272LfO6ENbwlzvrnlJlvPh6ysLKSs"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -23,7 +26,12 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.travelinefrontend"
+      "package": "com.anonymous.travelinefrontend",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCoD_272LfO6ENbwlzvrnlJlvPh6ysLKSs"
+        }
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
