@@ -1,10 +1,14 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { View, StyleSheet, TouchableOpacity, ScrollView, Platform, Dimensions, Animated, PanResponder } from 'react-native';
 import { Text } from 'react-native-paper';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import Constants from 'expo-constants';
 import { useUser } from '../src/context/UserContext';
+import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import type { Place } from '../src/context/UserContext';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -31,14 +35,107 @@ function calculateDistance(
     return distance;
 }
 
+// Google Directions API에서 반환된 polyline 디코딩
+function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
+    const poly: { latitude: number; longitude: number }[] = [];
+    let index = 0;
+    const len = encoded.length;
+    let lat = 0;
+    let lng = 0;
+
+    while (index < len) {
+        let b;
+        let shift = 0;
+        let result = 0;
+        do {
+            b = encoded.charCodeAt(index++) - 63;
+            result |= (b & 0x1f) << shift;
+            shift += 5;
+        } while (b >= 0x20);
+        const dlat = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+        lat += dlat;
+
+        shift = 0;
+        result = 0;
+        do {
+            b = encoded.charCodeAt(index++) - 63;
+            result |= (b & 0x1f) << shift;
+            shift += 5;
+        } while (b >= 0x20);
+        const dlng = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+        lng += dlng;
+
+        poly.push({
+            latitude: lat / 1e5,
+            longitude: lng / 1e5,
+        });
+    }
+
+    return poly;
+}
+
+// Google Directions API를 사용하여 두 지점 간 경로 가져오기
+async function fetchRoute(
+    origin: { latitude: number; longitude: number },
+    destination: { latitude: number; longitude: number },
+    apiKey: string
+): Promise<{ latitude: number; longitude: number }[]> {
+    try {
+        const originStr = `${origin.latitude},${origin.longitude}`;
+        const destStr = `${destination.latitude},${destination.longitude}`;
+
+        // 두 지점 간 거리 계산 (km)
+        const distance = calculateDistance(
+            origin.latitude,
+            origin.longitude,
+            destination.latitude,
+            destination.longitude
+        );
+
+        // 거리에 따라 이동 수단 자동 선택
+        // 2km 이하: 도보, 초과: 대중교통
+        const mode = distance <= 2 ? 'walking' : 'transit';
+
+        const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&mode=${mode}&key=${apiKey}`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.status === 'OK' && data.routes.length > 0) {
+            const points = data.routes[0].overview_polyline.points;
+            return decodePolyline(points);
+        }
+
+        // API 호출 실패 시 직선 반환
+        return [origin, destination];
+    } catch (error) {
+        console.error('Route fetch error:', error);
+        // 에러 발생 시 직선 반환
+        return [origin, destination];
+    }
+}
+
+// Google Maps API 키 (app.json에서 가져오기)
+const GOOGLE_MAPS_API_KEY = Platform.select({
+    ios: Constants.expoConfig?.ios?.config?.googleMapsApiKey,
+    android: Constants.expoConfig?.android?.config?.googleMaps?.apiKey,
+}) || 'AIzaSyCoD_272LfO6ENbwlzvrnlJlvPh6ysLKSs'; // Fallback
+
 export default function PlanDetailScreen() {
     const { planId } = useLocalSearchParams<{ planId: string }>();
-    const { getTravelPlan } = useUser();
+    const { getTravelPlan, reorderPlaces } = useUser();
     const [selectedDay, setSelectedDay] = useState(1);
+    const [isEditMode, setIsEditMode] = useState(false);
 
     // 지도 영역 높이 애니메이션
     const mapHeight = useRef(new Animated.Value(INITIAL_MAP_HEIGHT)).current;
     const currentHeight = useRef(INITIAL_MAP_HEIGHT);
+
+    // 지도 ref
+    const mapRef = useRef<MapView>(null);
+
+    // 실제 경로 데이터 저장
+    const [routeCoordinates, setRouteCoordinates] = useState<{ latitude: number; longitude: number }[]>([]);
 
     // PanResponder 설정
     const panResponder = useRef(
@@ -163,6 +260,71 @@ export default function PlanDetailScreen() {
         return currentDayData?.places || [];
     }, [currentDayData]);
 
+    // 실제 경로 가져오기
+    useEffect(() => {
+        const fetchRoutes = async () => {
+            const validMarkers = markers.filter(
+                place => place.latitude && place.longitude
+            );
+
+            if (validMarkers.length < 2) {
+                setRouteCoordinates([]);
+                return;
+            }
+
+            // 모든 구간의 경로를 가져와서 하나로 합치기
+            const allRouteCoordinates: { latitude: number; longitude: number }[] = [];
+
+            for (let i = 0; i < validMarkers.length - 1; i++) {
+                const origin = {
+                    latitude: validMarkers[i].latitude!,
+                    longitude: validMarkers[i].longitude!,
+                };
+                const destination = {
+                    latitude: validMarkers[i + 1].latitude!,
+                    longitude: validMarkers[i + 1].longitude!,
+                };
+
+                const routeSegment = await fetchRoute(origin, destination, GOOGLE_MAPS_API_KEY);
+
+                // 첫 번째 구간이 아니면 시작점 중복 제거
+                if (i > 0 && routeSegment.length > 0) {
+                    allRouteCoordinates.push(...routeSegment.slice(1));
+                } else {
+                    allRouteCoordinates.push(...routeSegment);
+                }
+            }
+
+            setRouteCoordinates(allRouteCoordinates);
+        };
+
+        fetchRoutes();
+    }, [markers]);
+
+    // 장소가 추가되거나 변경될 때 지도 확대 자동 조정
+    useEffect(() => {
+        if (markers.length > 0 && mapRef.current) {
+            const validMarkers = markers.filter(
+                place => place.latitude && place.longitude
+            );
+
+            if (validMarkers.length > 0) {
+                const coordinates = validMarkers.map(place => ({
+                    latitude: place.latitude!,
+                    longitude: place.longitude!,
+                }));
+
+                // 약간의 딜레이를 주어 지도가 렌더링된 후 실행
+                setTimeout(() => {
+                    mapRef.current?.fitToCoordinates(coordinates, {
+                        edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+                        animated: true,
+                    });
+                }, 500);
+            }
+        }
+    }, [markers]);
+
     const handleClose = () => {
         // 모든 모달을 닫고 홈 화면으로 이동
         router.dismissAll();
@@ -193,8 +355,148 @@ export default function PlanDetailScreen() {
         });
     };
 
+    const handleFlightsPress = () => {
+        router.push({
+            pathname: '/flights',
+            params: {
+                planId: planId || '',
+            },
+        });
+    };
+
+    const handleAccommodationsPress = () => {
+        router.push({
+            pathname: '/accommodations',
+            params: {
+                planId: planId || '',
+            },
+        });
+    };
+
+    // 장소 카드 렌더링 함수
+    const renderPlaceItem = ({ item: place, getIndex, drag, isActive }: RenderItemParams<Place>) => {
+        const currentDayData = tripData.days.find(day => day.dayNumber === selectedDay);
+        if (!currentDayData) return null;
+
+        const index = getIndex();
+        if (index === undefined) return null;
+
+        return (
+            <ScaleDecorator>
+                <View
+                    style={[
+                        styles.placeCardContainer,
+                        isActive && styles.placeCardDragging,
+                    ]}
+                >
+                    {/* 번호와 연결선 */}
+                    <View style={styles.placeLeftSection}>
+                        <View style={styles.placeNumber}>
+                            <Text style={styles.placeNumberText}>{index + 1}</Text>
+                        </View>
+                        <View style={[
+                            styles.connectionLineContainer,
+                            index === currentDayData.places.length - 1 && styles.lastConnectionLine
+                        ]}>
+                            <View style={styles.connectionLine} />
+                            {/* 거리 표시 (마지막 항목은 투명) */}
+                            <View style={[
+                                styles.distanceBadge,
+                                index === currentDayData.places.length - 1 && { opacity: 0 }
+                            ]}>
+                                <Text style={styles.distanceText}>
+                                    {(() => {
+                                        const nextPlace = currentDayData.places[index + 1];
+                                        if (nextPlace &&
+                                            place.latitude && place.longitude &&
+                                            nextPlace.latitude && nextPlace.longitude) {
+                                            const distance = calculateDistance(
+                                                place.latitude,
+                                                place.longitude,
+                                                nextPlace.latitude,
+                                                nextPlace.longitude
+                                            );
+                                            if (distance < 1) {
+                                                return `${Math.round(distance * 1000)}m`;
+                                            }
+                                            return `${distance.toFixed(1)}km`;
+                                        }
+                                        return '';
+                                    })()}
+                                </Text>
+                            </View>
+                        </View>
+                    </View>
+
+                    {/* 카드 내용 */}
+                    <TouchableOpacity
+                        style={styles.placeCard}
+                        onPress={() => {
+                            if (!isEditMode) {
+                                router.push({
+                                    pathname: '/place-detail',
+                                    params: {
+                                        planId: planId || '',
+                                        dayNumber: selectedDay.toString(),
+                                        placeId: place.id,
+                                    },
+                                });
+                            }
+                        }}
+                        disabled={isEditMode}
+                    >
+                        <View style={styles.placeCardInner}>
+                            {/* 시간 표시 (왼쪽) */}
+                            {place.time && (
+                                <Text style={styles.placeTimeLeft}>{place.time}</Text>
+                            )}
+
+                            {/* 장소 정보 */}
+                            <View style={styles.placeMainInfo}>
+                                <Text style={styles.placeName}>{place.name}</Text>
+                                {place.address && (
+                                    <Text style={styles.placeAddress} numberOfLines={1}>
+                                        {place.address}
+                                    </Text>
+                                )}
+                                {place.time && (
+                                    <Text style={styles.placeTimeInCard}>{place.time}</Text>
+                                )}
+                            </View>
+
+                            {/* 하단 정보 (좋아요, 지출) */}
+                            <View style={styles.placeBottomInfo}>
+                                <View style={styles.placeLikeSection}>
+                                    <Feather name="heart" size={12} color="#000" />
+                                    <Text style={styles.placeLikeText}>좋아요</Text>
+                                    <Text style={styles.placeLikeCount}>0</Text>
+                                </View>
+                                <Text style={styles.placeExpense}>지출 총합 0엔</Text>
+                            </View>
+                        </View>
+                    </TouchableOpacity>
+
+                    {/* 리오더 핸들 (편집 모드일 때만 표시) */}
+                    {isEditMode && (
+                        <TouchableOpacity
+                            style={styles.reorderHandle}
+                            onLongPress={drag}
+                            disabled={!isEditMode || isActive}
+                        >
+                            <MaterialIcons
+                                name="reorder"
+                                size={24}
+                                color={isActive ? '#088CDA' : '#C7C7C7'}
+                            />
+                        </TouchableOpacity>
+                    )}
+                </View>
+            </ScaleDecorator>
+        );
+    };
+
     return (
-        <View style={styles.container}>
+        <GestureHandlerRootView style={styles.container}>
             {/* 상단 헤더 */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
@@ -217,13 +519,13 @@ export default function PlanDetailScreen() {
 
                 {/* 항공편/숙소 버튼 */}
                 <View style={styles.quickActionsRow}>
-                    <TouchableOpacity style={styles.quickActionButton}>
+                    <TouchableOpacity style={styles.quickActionButton} onPress={handleFlightsPress}>
                         <View style={styles.iconCircle}>
                             <Feather name="plus" size={10} color="#C7C7C7" />
                         </View>
                         <Text style={styles.quickActionText}>항공편</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.quickActionButton}>
+                    <TouchableOpacity style={styles.quickActionButton} onPress={handleAccommodationsPress}>
                         <View style={styles.iconCircle}>
                             <Feather name="plus" size={10} color="#C7C7C7" />
                         </View>
@@ -249,25 +551,47 @@ export default function PlanDetailScreen() {
             {/* 지도 영역 */}
             <Animated.View style={[styles.mapSection, { height: mapHeight }]}>
                 <MapView
+                    ref={mapRef}
                     provider={PROVIDER_GOOGLE}
                     style={styles.map}
                     initialRegion={initialRegion}
                     showsUserLocation={true}
                     showsMyLocationButton={true}
                 >
+                    {/* 장소들 사이의 실제 경로선 */}
+                    {routeCoordinates.length > 0 && (
+                        <Polyline
+                            coordinates={routeCoordinates}
+                            strokeColor="#088CDA"
+                            strokeWidth={5}
+                            lineCap="round"
+                            lineJoin="round"
+                        />
+                    )}
+
+                    {/* 마커들 */}
                     {markers
                         .filter(place => place.latitude && place.longitude)
-                        .map((place, index) => (
-                            <Marker
-                                key={place.id}
-                                coordinate={{
-                                    latitude: place.latitude!,
-                                    longitude: place.longitude!,
-                                }}
-                                title={place.name}
-                                description={place.address}
-                            />
-                        ))}
+                        .map((place, index) => {
+                            const validMarkers = markers.filter(p => p.latitude && p.longitude);
+                            const markerIndex = validMarkers.findIndex(p => p.id === place.id);
+
+                            return (
+                                <Marker
+                                    key={place.id}
+                                    coordinate={{
+                                        latitude: place.latitude!,
+                                        longitude: place.longitude!,
+                                    }}
+                                    title={place.name}
+                                    description={place.address}
+                                >
+                                    <View style={styles.customMarker}>
+                                        <Text style={styles.markerNumber}>{markerIndex + 1}</Text>
+                                    </View>
+                                </Marker>
+                            );
+                        })}
                 </MapView>
             </Animated.View>
 
@@ -312,111 +636,62 @@ export default function PlanDetailScreen() {
                         <Text style={styles.dayLabel}>{currentDayData?.dayNumber}일차</Text>
                         <Text style={styles.dayDate}>{currentDayData?.displayDate}</Text>
                     </View>
-                    <Text style={styles.editText}>편집</Text>
+                    <TouchableOpacity onPress={() => setIsEditMode(!isEditMode)}>
+                        <Text style={styles.editText}>{isEditMode ? '완료' : '편집'}</Text>
+                    </TouchableOpacity>
                 </View>
 
+                {/* 편집 모드 안내 */}
+                {isEditMode && currentDayData && currentDayData.places.length > 0 && (
+                    <View style={styles.editModeHint}>
+                        <MaterialIcons name="info-outline" size={16} color="#088CDA" />
+                        <Text style={styles.editModeHintText}>
+                            리오더 아이콘(≡)을 길게 눌러 드래그하여 순서를 변경하세요
+                        </Text>
+                    </View>
+                )}
+
                 {/* 일정 내용 */}
-                <ScrollView
-                    style={styles.scheduleContent}
-                    showsVerticalScrollIndicator={false}
-                >
-                    {/* 장소 리스트 */}
+                <View style={styles.scheduleContentContainer}>
                     {currentDayData?.places.length === 0 ? (
-                        <View style={styles.emptyPlaces}>
-                            <Text style={styles.emptyPlacesText}>아직 추가된 장소가 없습니다</Text>
-                        </View>
+                        <ScrollView
+                            style={styles.scheduleContent}
+                            showsVerticalScrollIndicator={false}
+                        >
+                            <View style={styles.emptyPlaces}>
+                                <Text style={styles.emptyPlacesText}>아직 추가된 장소가 없습니다</Text>
+                            </View>
+                            {/* 장소 추가 버튼 */}
+                            <TouchableOpacity style={styles.addPlaceButton} onPress={handleAddPlace}>
+                                <Feather name="plus" size={12} color="#fff" />
+                                <Text style={styles.addPlaceText}>장소 추가</Text>
+                            </TouchableOpacity>
+                        </ScrollView>
                     ) : (
-                        <View style={styles.placesList}>
-                            {currentDayData?.places.map((place, index) => (
-                                <React.Fragment key={place.id}>
-                                    {/* 장소 카드 */}
-                                    <View style={styles.placeCardContainer}>
-                                        {/* 번호와 연결선 */}
-                                        <View style={styles.placeLeftSection}>
-                                            <View style={styles.placeNumber}>
-                                                <Text style={styles.placeNumberText}>{index + 1}</Text>
-                                            </View>
-                                            <View style={[
-                                                styles.connectionLineContainer,
-                                                index === currentDayData.places.length - 1 && styles.lastConnectionLine
-                                            ]}>
-                                                <View style={styles.connectionLine} />
-                                                {/* 거리 표시 (마지막 항목은 투명) */}
-                                                <View style={[
-                                                    styles.distanceBadge,
-                                                    index === currentDayData.places.length - 1 && { opacity: 0 }
-                                                ]}>
-                                                    <Text style={styles.distanceText}>
-                                                        {(() => {
-                                                            // 다음 장소가 있고 둘 다 좌표가 있으면 실제 거리 계산
-                                                            const nextPlace = currentDayData.places[index + 1];
-                                                            if (nextPlace &&
-                                                                place.latitude && place.longitude &&
-                                                                nextPlace.latitude && nextPlace.longitude) {
-                                                                const distance = calculateDistance(
-                                                                    place.latitude,
-                                                                    place.longitude,
-                                                                    nextPlace.latitude,
-                                                                    nextPlace.longitude
-                                                                );
-                                                                // 1km 미만이면 미터 단위로 표시
-                                                                if (distance < 1) {
-                                                                    return `${Math.round(distance * 1000)}m`;
-                                                                }
-                                                                return `${distance.toFixed(1)}km`;
-                                                            }
-                                                            // 좌표가 없으면 빈 문자열 (레이아웃 유지)
-                                                            return '';
-                                                        })()}
-                                                    </Text>
-                                                </View>
-                                            </View>
-                                        </View>
-
-                                        {/* 카드 내용 */}
-                                        <View style={styles.placeCard}>
-                                            <View style={styles.placeCardInner}>
-                                                {/* 시간 표시 (왼쪽) */}
-                                                {place.time && (
-                                                    <Text style={styles.placeTimeLeft}>{place.time}</Text>
-                                                )}
-
-                                                {/* 장소 정보 */}
-                                                <View style={styles.placeMainInfo}>
-                                                    <Text style={styles.placeName}>{place.name}</Text>
-                                                    {place.address && (
-                                                        <Text style={styles.placeAddress} numberOfLines={1}>
-                                                            {place.address}
-                                                        </Text>
-                                                    )}
-                                                    {place.time && (
-                                                        <Text style={styles.placeTimeInCard}>{place.time}</Text>
-                                                    )}
-                                                </View>
-
-                                                {/* 하단 정보 (좋아요, 지출) */}
-                                                <View style={styles.placeBottomInfo}>
-                                                    <View style={styles.placeLikeSection}>
-                                                        <Feather name="heart" size={12} color="#000" />
-                                                        <Text style={styles.placeLikeText}>좋아요</Text>
-                                                        <Text style={styles.placeLikeCount}>0</Text>
-                                                    </View>
-                                                    <Text style={styles.placeExpense}>지출 총합 0엔</Text>
-                                                </View>
-                                            </View>
-                                        </View>
-                                    </View>
-                                </React.Fragment>
-                            ))}
-                        </View>
+                        <>
+                            <DraggableFlatList
+                                data={currentDayData?.places || []}
+                                renderItem={renderPlaceItem}
+                                keyExtractor={(item) => item.id}
+                                onDragEnd={({ data, from, to }) => {
+                                    if (from !== to && planId) {
+                                        reorderPlaces(planId, selectedDay, from, to);
+                                    }
+                                }}
+                                activationDistance={isEditMode ? 10 : 999999}
+                                containerStyle={styles.draggableList}
+                                contentContainerStyle={styles.draggableListContent}
+                            />
+                            {/* 장소 추가 버튼 */}
+                            <View style={styles.addPlaceButtonContainer}>
+                                <TouchableOpacity style={styles.addPlaceButton} onPress={handleAddPlace}>
+                                    <Feather name="plus" size={12} color="#fff" />
+                                    <Text style={styles.addPlaceText}>장소 추가</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </>
                     )}
-
-                    {/* 장소 추가 버튼 */}
-                    <TouchableOpacity style={styles.addPlaceButton} onPress={handleAddPlace}>
-                        <Feather name="plus" size={12} color="#fff" />
-                        <Text style={styles.addPlaceText}>장소 추가</Text>
-                    </TouchableOpacity>
-                </ScrollView>
+                </View>
             </Animated.View>
 
             {/* 하단 네비게이션 바 */}
@@ -434,7 +709,7 @@ export default function PlanDetailScreen() {
                     <MaterialIcons name="chat" size={32} color="#9E9E9E" />
                 </TouchableOpacity>
             </View>
-        </View>
+        </GestureHandlerRootView>
     );
 }
 
@@ -620,10 +895,26 @@ const styles = StyleSheet.create({
     dayTabTextActive: {
         color: '#fff',
     },
+    scheduleContentContainer: {
+        flex: 1,
+    },
     scheduleContent: {
         flex: 1,
         paddingHorizontal: 21,
         paddingTop: 16,
+    },
+    draggableList: {
+        flex: 1,
+    },
+    draggableListContent: {
+        paddingHorizontal: 21,
+        paddingTop: 16,
+        paddingBottom: 16,
+    },
+    addPlaceButtonContainer: {
+        paddingHorizontal: 21,
+        paddingBottom: 24,
+        backgroundColor: '#fff',
     },
     dayHeader: {
         flexDirection: 'row',
@@ -672,8 +963,7 @@ const styles = StyleSheet.create({
         paddingVertical: 4,
         height: 24,
         alignSelf: 'flex-start',
-        marginTop: 16,
-        marginBottom: 24,
+        marginTop: 8,
     },
     addPlaceText: {
         fontSize: 12,
@@ -861,6 +1151,65 @@ const styles = StyleSheet.create({
     navItem: {
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    reorderHandle: {
+        width: 32,
+        height: 32,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 8,
+    },
+    placeCardDragging: {
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 8,
+        },
+        shadowOpacity: 0.3,
+        shadowRadius: 12,
+        elevation: 12,
+    },
+    editModeHint: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        backgroundColor: '#E3F2FD',
+        marginHorizontal: 21,
+        marginTop: 8,
+        borderRadius: 8,
+    },
+    editModeHintText: {
+        fontSize: 12,
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#088CDA',
+        fontWeight: '500',
+    },
+    customMarker: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#088CDA',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 3,
+        borderColor: '#fff',
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.3,
+        shadowRadius: 3,
+        elevation: 5,
+    },
+    markerNumber: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#fff',
     },
 });
 

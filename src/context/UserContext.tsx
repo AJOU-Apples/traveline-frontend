@@ -8,6 +8,12 @@ export type Trip = {
   startDate: string; // ISO
 };
 
+export type Photo = {
+  id: string;
+  uri: string;
+  timestamp: number;
+};
+
 export type Place = {
   id: string;
   name: string;
@@ -16,6 +22,7 @@ export type Place = {
   memo?: string;
   latitude?: number;
   longitude?: number;
+  photos?: Photo[];
 };
 
 export type TravelDay = {
@@ -24,6 +31,41 @@ export type TravelDay = {
   date: string; // YYYY-MM-DD
   displayDate: string; // "11월 20일(목)"
   places: Place[];
+};
+
+export type Flight = {
+  id: string;
+  travelPlanId: string;
+  airline: string; // 항공사 코드 (KE, OZ 등)
+  flightNumber: string; // 편명
+  departureDate: string; // YYYY-MM-DD
+  departureTime: string; // HH:MM
+  arrivalTime: string; // HH:MM
+  departureAirport: string; // 인천 국제 공항
+  departureAirportCode: string; // ICN
+  arrivalAirport: string; // 나리타 국제 공항
+  arrivalAirportCode: string; // NRT
+  duration?: string; // 2시간 30분 소요
+  bookingReference?: string; // 예약 번호
+  likes?: number; // 좋아요 수
+};
+
+export type Accommodation = {
+  id: string;
+  travelPlanId: string;
+  name: string; // 숙소명
+  address: string; // 주소
+  latitude?: number;
+  longitude?: number;
+  checkInDate: string; // YYYY-MM-DD
+  checkOutDate: string; // YYYY-MM-DD
+  checkInTime?: string; // HH:MM
+  checkOutTime?: string; // HH:MM
+  bookingReference?: string; // 예약 확인 번호
+  phoneNumber?: string;
+  website?: string;
+  memo?: string;
+  likes?: number; // 좋아요 수
 };
 
 export type TravelPlan = {
@@ -42,10 +84,25 @@ type UserContextValue = {
   recentTrips: Trip[];
   popularTrips: Trip[];
   travelPlans: TravelPlan[];
+  flights: Flight[];
+  accommodations: Accommodation[];
   addTravelPlan: (plan: Omit<TravelPlan, 'id'>) => string;
   getTravelPlan: (id: string) => TravelPlan | undefined;
   updateTravelPlan: (id: string, plan: Partial<TravelPlan>) => void;
   addPlaceToDay: (planId: string, dayNumber: number, place: Omit<Place, 'id'>) => void;
+  reorderPlaces: (planId: string, dayNumber: number, fromIndex: number, toIndex: number) => void;
+  addPhotoToPlace: (planId: string, dayNumber: number, placeId: string, photoUri: string) => void;
+  deletePhotoFromPlace: (planId: string, dayNumber: number, placeId: string, photoId: string) => void;
+  // Flight methods
+  getFlightsByPlan: (planId: string) => Flight[];
+  addFlight: (flight: Omit<Flight, 'id'>) => string;
+  updateFlight: (id: string, flight: Partial<Flight>) => void;
+  deleteFlight: (id: string) => void;
+  // Accommodation methods
+  getAccommodationsByPlan: (planId: string) => Accommodation[];
+  addAccommodation: (accommodation: Omit<Accommodation, 'id'>) => string;
+  updateAccommodation: (id: string, accommodation: Partial<Accommodation>) => void;
+  deleteAccommodation: (id: string) => void;
 };
 
 const defaultTrips: Trip[] = [
@@ -73,6 +130,8 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
   const [username] = useState('Team Apples');
   const [trips] = useState<Trip[]>(defaultTrips);
   const [travelPlans, setTravelPlans] = useState<TravelPlan[]>([]);
+  const [flights, setFlights] = useState<Flight[]>([]);
+  const [accommodations, setAccommodations] = useState<Accommodation[]>([]);
 
   const upcomingTrip = useMemo(() => trips[0], [trips]);
 
@@ -122,16 +181,162 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     );
   };
 
+  const reorderPlaces = (planId: string, dayNumber: number, fromIndex: number, toIndex: number) => {
+    setTravelPlans((prev) =>
+      prev.map((plan) => {
+        if (plan.id !== planId) return plan;
+
+        return {
+          ...plan,
+          days: plan.days.map((day) => {
+            if (day.dayNumber !== dayNumber) return day;
+
+            const newPlaces = [...day.places];
+            const [movedPlace] = newPlaces.splice(fromIndex, 1);
+            newPlaces.splice(toIndex, 0, movedPlace);
+
+            return {
+              ...day,
+              places: newPlaces,
+            };
+          }),
+        };
+      })
+    );
+  };
+
+  const addPhotoToPlace = (planId: string, dayNumber: number, placeId: string, photoUri: string) => {
+    const photoId = `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const newPhoto: Photo = {
+      id: photoId,
+      uri: photoUri,
+      timestamp: Date.now(),
+    };
+
+    setTravelPlans((prev) =>
+      prev.map((plan) => {
+        if (plan.id !== planId) return plan;
+
+        return {
+          ...plan,
+          days: plan.days.map((day) => {
+            if (day.dayNumber !== dayNumber) return day;
+
+            return {
+              ...day,
+              places: day.places.map((place) => {
+                if (place.id !== placeId) return place;
+
+                return {
+                  ...place,
+                  photos: [...(place.photos || []), newPhoto],
+                };
+              }),
+            };
+          }),
+        };
+      })
+    );
+  };
+
+  const deletePhotoFromPlace = (planId: string, dayNumber: number, placeId: string, photoId: string) => {
+    setTravelPlans((prev) =>
+      prev.map((plan) => {
+        if (plan.id !== planId) return plan;
+
+        return {
+          ...plan,
+          days: plan.days.map((day) => {
+            if (day.dayNumber !== dayNumber) return day;
+
+            return {
+              ...day,
+              places: day.places.map((place) => {
+                if (place.id !== placeId) return place;
+
+                return {
+                  ...place,
+                  photos: (place.photos || []).filter((photo) => photo.id !== photoId),
+                };
+              }),
+            };
+          }),
+        };
+      })
+    );
+  };
+
+  // Flight methods
+  const getFlightsByPlan = (planId: string) => {
+    return flights.filter((flight) => flight.travelPlanId === planId);
+  };
+
+  const addFlight = (flight: Omit<Flight, 'id'>) => {
+    const id = `flight_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const newFlight: Flight = {
+      ...flight,
+      id,
+    };
+    setFlights((prev) => [...prev, newFlight]);
+    return id;
+  };
+
+  const updateFlight = (id: string, updates: Partial<Flight>) => {
+    setFlights((prev) => prev.map((flight) => (flight.id === id ? { ...flight, ...updates } : flight)));
+  };
+
+  const deleteFlight = (id: string) => {
+    setFlights((prev) => prev.filter((flight) => flight.id !== id));
+  };
+
+  // Accommodation methods
+  const getAccommodationsByPlan = (planId: string) => {
+    return accommodations.filter((acc) => acc.travelPlanId === planId);
+  };
+
+  const addAccommodation = (accommodation: Omit<Accommodation, 'id'>) => {
+    const id = `accommodation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const newAccommodation: Accommodation = {
+      ...accommodation,
+      id,
+    };
+    setAccommodations((prev) => [...prev, newAccommodation]);
+    return id;
+  };
+
+  const updateAccommodation = (id: string, updates: Partial<Accommodation>) => {
+    setAccommodations((prev) =>
+      prev.map((acc) => (acc.id === id ? { ...acc, ...updates } : acc))
+    );
+  };
+
+  const deleteAccommodation = (id: string) => {
+    setAccommodations((prev) => prev.filter((acc) => acc.id !== id));
+  };
+
   const value: UserContextValue = {
     username,
     upcomingTrip,
     recentTrips: trips,
     popularTrips: trips,
     travelPlans,
+    flights,
+    accommodations,
     addTravelPlan,
     getTravelPlan,
     updateTravelPlan,
     addPlaceToDay,
+    reorderPlaces,
+    addPhotoToPlace,
+    deletePhotoFromPlace,
+    getFlightsByPlan,
+    addFlight,
+    updateFlight,
+    deleteFlight,
+    getAccommodationsByPlan,
+    addAccommodation,
+    updateAccommodation,
+    deleteAccommodation,
   };
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;
