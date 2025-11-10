@@ -101,9 +101,12 @@ type UserContextValue = {
   getTravelPlan: (id: string) => TravelPlan | undefined;
   updateTravelPlan: (id: string, plan: Partial<TravelPlan>) => void;
   addPlaceToDay: (planId: string, dayNumber: number, place: Omit<Place, 'id'>) => void;
+  deletePlaceFromDay: (planId: string, dayNumber: number, placeId: string) => void;
   reorderPlaces: (planId: string, dayNumber: number, fromIndex: number, toIndex: number) => void;
   addPhotoToPlace: (planId: string, dayNumber: number, placeId: string, photoUri: string) => void;
   deletePhotoFromPlace: (planId: string, dayNumber: number, placeId: string, photoId: string) => void;
+  // Memo methods
+  updatePlaceMemo: (planId: string, dayNumber: number, placeId: string, memo: string) => void;
   // Expense methods
   addExpenseToPlace: (planId: string, dayNumber: number, placeId: string, expense: Omit<Expense, 'id' | 'timestamp'>) => void;
   deleteExpenseFromPlace: (planId: string, dayNumber: number, placeId: string, expenseId: string) => void;
@@ -197,6 +200,26 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     );
   };
 
+  const deletePlaceFromDay = (planId: string, dayNumber: number, placeId: string) => {
+    setTravelPlans((prev) =>
+      prev.map((plan) => {
+        if (plan.id !== planId) return plan;
+
+        return {
+          ...plan,
+          days: plan.days.map((day) => {
+            if (day.dayNumber !== dayNumber) return day;
+
+            return {
+              ...day,
+              places: day.places.filter((place) => place.id !== placeId),
+            };
+          }),
+        };
+      })
+    );
+  };
+
   const reorderPlaces = (planId: string, dayNumber: number, fromIndex: number, toIndex: number) => {
     setTravelPlans((prev) =>
       prev.map((plan) => {
@@ -273,6 +296,34 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
                 return {
                   ...place,
                   photos: (place.photos || []).filter((photo) => photo.id !== photoId),
+                };
+              }),
+            };
+          }),
+        };
+      })
+    );
+  };
+
+  // Memo methods
+  const updatePlaceMemo = (planId: string, dayNumber: number, placeId: string, memo: string) => {
+    setTravelPlans((prev) =>
+      prev.map((plan) => {
+        if (plan.id !== planId) return plan;
+
+        return {
+          ...plan,
+          days: plan.days.map((day) => {
+            if (day.dayNumber !== dayNumber) return day;
+
+            return {
+              ...day,
+              places: day.places.map((place) => {
+                if (place.id !== placeId) return place;
+
+                return {
+                  ...place,
+                  memo: memo,
                 };
               }),
             };
@@ -420,9 +471,11 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     getTravelPlan,
     updateTravelPlan,
     addPlaceToDay,
+    deletePlaceFromDay,
     reorderPlaces,
     addPhotoToPlace,
     deletePhotoFromPlace,
+    updatePlaceMemo,
     addExpenseToPlace,
     deleteExpenseFromPlace,
     getFlightsByPlan,

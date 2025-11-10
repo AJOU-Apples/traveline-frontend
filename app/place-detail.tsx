@@ -13,7 +13,7 @@ export default function PlaceDetailScreen() {
         placeId: string;
     }>();
 
-    const { getTravelPlan, addPhotoToPlace, deletePhotoFromPlace, addExpenseToPlace, deleteExpenseFromPlace } = useUser();
+    const { getTravelPlan, addPhotoToPlace, deletePhotoFromPlace, addExpenseToPlace, deleteExpenseFromPlace, updatePlaceMemo, deletePlaceFromDay } = useUser();
     const [showTimeModal, setShowTimeModal] = useState(false);
     const [showExpenseModal, setShowExpenseModal] = useState(false);
     const [showMemoModal, setShowMemoModal] = useState(false);
@@ -22,6 +22,7 @@ export default function PlaceDetailScreen() {
     const [expenseType, setExpenseType] = useState<'personal' | 'shared'>('personal');
     const [expenseTitle, setExpenseTitle] = useState('');
     const [expenseAmount, setExpenseAmount] = useState('');
+    const [memoText, setMemoText] = useState('');
 
     // 여행 데이터 및 장소 정보 가져오기
     const tripData = getTravelPlan(planId || '');
@@ -195,7 +196,23 @@ export default function PlaceDetailScreen() {
     };
 
     const handleMemoAdd = () => {
+        setMemoText(place?.memo || '');
         setShowMemoModal(true);
+    };
+
+    const handleSaveMemo = () => {
+        if (planId && placeId) {
+            updatePlaceMemo(planId, parseInt(dayNumber || '1'), placeId, memoText);
+            setShowMemoModal(false);
+        }
+    };
+
+    const handleDeleteMemo = () => {
+        if (planId && placeId) {
+            updatePlaceMemo(planId, parseInt(dayNumber || '1'), placeId, '');
+            setMemoText('');
+            setShowMemoModal(false);
+        }
     };
 
     const handleDeletePlace = () => {
@@ -212,9 +229,10 @@ export default function PlaceDetailScreen() {
                     text: '삭제하기',
                     style: 'destructive',
                     onPress: () => {
-                        // TODO: 장소 삭제 구현
-                        console.log('Delete place');
-                        router.back();
+                        if (planId && placeId) {
+                            deletePlaceFromDay(planId, parseInt(dayNumber || '1'), placeId);
+                            router.back();
+                        }
                     },
                 },
             ]
@@ -354,6 +372,25 @@ export default function PlaceDetailScreen() {
                 {/* 메모 섹션 */}
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>메모</Text>
+
+                    {/* 저장된 메모 표시 */}
+                    {place.memo && place.memo.trim() !== '' && (
+                        <TouchableOpacity
+                            style={styles.memoItemContainer}
+                            onPress={handleMemoAdd}
+                            activeOpacity={0.7}
+                        >
+                            <View style={styles.memoUserInfo}>
+                                <MaterialIcons name="account-circle" size={24} color="#C7C7C7" />
+                                <Text style={styles.memoUserName}>Team Apples</Text>
+                            </View>
+                            <Text style={styles.memoContentText} numberOfLines={1} ellipsizeMode="tail">
+                                {place.memo}
+                            </Text>
+                        </TouchableOpacity>
+                    )}
+
+                    {/* 메모 추가/편집 버튼 */}
                     <TouchableOpacity style={styles.addButton} onPress={handleMemoAdd}>
                         <Feather name="plus" size={12} color="#fff" />
                         <Text style={styles.addButtonText}>메모 추가</Text>
@@ -513,26 +550,23 @@ export default function PlaceDetailScreen() {
                     onPress={() => setShowMemoModal(false)}
                 >
                     <View style={styles.memoModalContent} onStartShouldSetResponder={() => true}>
-                        <Text style={styles.modalTitle}>{place.name}</Text>
-                        <TextInput
-                            style={[styles.modalInput, styles.memoInput]}
-                            placeholder="메모를 입력하세요"
-                            placeholderTextColor="#9E9E9E"
-                            multiline
-                            numberOfLines={4}
-                            textAlignVertical="top"
-                        />
+                        <View style={styles.memoInputContainer}>
+                            <TextInput
+                                style={styles.memoTextInput}
+                                placeholder="메모를 입력하세요"
+                                placeholderTextColor="#9E9E9E"
+                                multiline
+                                textAlignVertical="top"
+                                value={memoText}
+                                onChangeText={setMemoText}
+                            />
+                        </View>
                         <View style={styles.modalButtons}>
-                            <TouchableOpacity onPress={() => setShowMemoModal(false)}>
+                            <TouchableOpacity onPress={handleDeleteMemo}>
                                 <Text style={styles.modalCancelText}>삭제하기</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity
-                                onPress={() => {
-                                    setShowMemoModal(false);
-                                    Alert.alert('안내', '메모 저장 기능은 추후 구현 예정입니다.');
-                                }}
-                            >
-                                <Text style={styles.modalConfirmText}>확인</Text>
+                            <TouchableOpacity onPress={handleSaveMemo}>
+                                <Text style={styles.memoConfirmText}>확인</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -769,13 +803,15 @@ const styles = StyleSheet.create({
     modalButtons: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        paddingHorizontal: 22,
+        width: 192,
+        alignSelf: 'center',
     },
     modalCancelText: {
         fontSize: 16,
         lineHeight: 24,
         letterSpacing: -0.2,
         color: '#585858',
+        fontWeight: '600',
     },
     modalConfirmText: {
         fontSize: 16,
@@ -834,10 +870,28 @@ const styles = StyleSheet.create({
         marginHorizontal: 53,
         marginTop: 'auto',
         marginBottom: 'auto',
+        gap: 32,
     },
-    memoInput: {
+    memoInputContainer: {
+        backgroundColor: '#F6F6F6',
+        borderRadius: 8,
+        padding: 8,
         height: 80,
-        marginBottom: 16,
+    },
+    memoTextInput: {
+        flex: 1,
+        fontSize: 14,
+        lineHeight: 20,
+        letterSpacing: -0.175,
+        color: '#000',
+        fontFamily: 'Pretendard',
+    },
+    memoConfirmText: {
+        fontSize: 16,
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#088CDA',
+        fontWeight: '600',
     },
     expenseList: {
         marginBottom: 8,
@@ -896,6 +950,32 @@ const styles = StyleSheet.create({
         letterSpacing: -0.2,
         color: '#585858',
         marginLeft: 8,
+    },
+    memoItemContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 16,
+        marginBottom: 8,
+    },
+    memoUserInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        width: 110,
+    },
+    memoUserName: {
+        fontSize: 14,
+        lineHeight: 20,
+        letterSpacing: -0.175,
+        color: '#000',
+        fontWeight: '500',
+    },
+    memoContentText: {
+        flex: 1,
+        fontSize: 14,
+        lineHeight: 20,
+        letterSpacing: -0.175,
+        color: '#000',
     },
 });
 
