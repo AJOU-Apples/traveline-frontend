@@ -1,9 +1,10 @@
 import React, {useState} from 'react';
-import {View, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform, Alert, Modal} from 'react-native';
+import {View, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform, Alert, Modal, ActivityIndicator} from 'react-native';
 import {Text} from 'react-native-paper';
 import {router, useLocalSearchParams} from 'expo-router';
 import {Feather} from '@expo/vector-icons';
 import {Calendar, DateData} from 'react-native-calendars';
+import {getFlightStatus} from '../src/utils/amadeusApi';
 
 export default function RegisterFlightNumberScreen() {
     const {planId} = useLocalSearchParams<{ planId: string }>();
@@ -11,6 +12,7 @@ export default function RegisterFlightNumberScreen() {
     const [airline, setAirline] = useState('');
     const [flightNumber, setFlightNumber] = useState('');
     const [showDatePicker, setShowDatePicker] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
 
     const handleBack = () => {
         router.back();
@@ -25,7 +27,7 @@ export default function RegisterFlightNumberScreen() {
         setShowDatePicker(false);
     };
 
-    const handleRegister = () => {
+    const handleRegister = async () => {
         // 유효성 검사
         if (!departureDate) {
             Alert.alert('알림', '출발일을 선택해주세요.');
@@ -40,16 +42,82 @@ export default function RegisterFlightNumberScreen() {
             return;
         }
 
-        // 항공편 추가 화면으로 이동
-        router.push({
-            pathname: '/add-flight',
-            params: {
-                planId,
-                departureDate,
-                airline: airline.toUpperCase(),
+        setIsLoading(true);
+
+        try {
+            // Amadeus API를 통해 항공편 정보 조회
+            const flightInfo = await getFlightStatus(
+                airline.toUpperCase(),
                 flightNumber,
-            },
-        });
+                departureDate
+            );
+
+            setIsLoading(false);
+
+            if (flightInfo) {
+                // API에서 정보를 가져온 경우, 자동으로 채워진 정보와 함께 이동
+                router.push({
+                    pathname: '/add-flight',
+                    params: {
+                        planId,
+                        departureDate,
+                        airline: airline.toUpperCase(),
+                        flightNumber,
+                        departureAirport: flightInfo.departureAirport,
+                        departureAirportCode: flightInfo.departureAirportCode,
+                        arrivalAirport: flightInfo.arrivalAirport,
+                        arrivalAirportCode: flightInfo.arrivalAirportCode,
+                        departureTime: flightInfo.departureTime,
+                        arrivalTime: flightInfo.arrivalTime,
+                    },
+                });
+            } else {
+                // API에서 정보를 가져오지 못한 경우, 수동 입력
+                Alert.alert(
+                    '항공편 정보 없음',
+                    '항공편 정보를 찾을 수 없습니다. 수동으로 입력해주세요.',
+                    [
+                        {
+                            text: '확인',
+                            onPress: () => {
+                                router.push({
+                                    pathname: '/add-flight',
+                                    params: {
+                                        planId,
+                                        departureDate,
+                                        airline: airline.toUpperCase(),
+                                        flightNumber,
+                                    },
+                                });
+                            },
+                        },
+                    ]
+                );
+            }
+        } catch (error) {
+            setIsLoading(false);
+            console.error('Error fetching flight info:', error);
+            Alert.alert(
+                '오류',
+                '항공편 정보를 불러오는 중 오류가 발생했습니다. 수동으로 입력해주세요.',
+                [
+                    {
+                        text: '확인',
+                        onPress: () => {
+                            router.push({
+                                pathname: '/add-flight',
+                                params: {
+                                    planId,
+                                    departureDate,
+                                    airline: airline.toUpperCase(),
+                                    flightNumber,
+                                },
+                            });
+                        },
+                    },
+                ]
+            );
+        }
     };
 
     return (
@@ -90,7 +158,7 @@ export default function RegisterFlightNumberScreen() {
                             placeholder="항공사 코드를 입력해주세요."
                             placeholderTextColor="#B0B0B0"
                             value={airline}
-                            onChangeText={setAirline}
+                            onChangeText={(text) => setAirline(text.toUpperCase())}
                             autoCapitalize="characters"
                             maxLength={3}
                         />
@@ -107,8 +175,8 @@ export default function RegisterFlightNumberScreen() {
                             placeholder="편명을 입력해주세요. 예) 101"
                             placeholderTextColor="#B0B0B0"
                             value={flightNumber}
-                            onChangeText={setFlightNumber}
-                            keyboardType="number-pad"
+                            onChangeText={(text) => setFlightNumber(text.toUpperCase())}
+                            autoCapitalize="characters"
                         />
                         <View style={styles.underline}/>
                     </View>
@@ -118,11 +186,15 @@ export default function RegisterFlightNumberScreen() {
             {/* 하단바 */}
             <View style={styles.footer}>
                 <TouchableOpacity
-                    style={[styles.registerButton, (!departureDate || !airline || !flightNumber) && styles.registerButtonDisabled]}
+                    style={[styles.registerButton, (!departureDate || !airline || !flightNumber || isLoading) && styles.registerButtonDisabled]}
                     onPress={handleRegister}
-                    disabled={!departureDate || !airline || !flightNumber}
+                    disabled={!departureDate || !airline || !flightNumber || isLoading}
                 >
-                    <Text style={styles.registerButtonText}>등록</Text>
+                    {isLoading ? (
+                        <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                        <Text style={styles.registerButtonText}>등록</Text>
+                    )}
                 </TouchableOpacity>
             </View>
 

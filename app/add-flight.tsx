@@ -1,9 +1,9 @@
-import React, {useState} from 'react';
-import {View, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform, Alert} from 'react-native';
-import {Text} from 'react-native-paper';
-import {router, useLocalSearchParams} from 'expo-router';
-import {Feather} from '@expo/vector-icons';
-import {useUser} from '../src/context/UserContext';
+import React, { useState } from 'react';
+import { View, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform, Alert } from 'react-native';
+import { Text } from 'react-native-paper';
+import { router, useLocalSearchParams } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
+import { useUser } from '../src/context/UserContext';
 import TimePicker from '../components/TimePicker';
 
 export default function AddFlightScreen() {
@@ -16,6 +16,8 @@ export default function AddFlightScreen() {
         departureAirportCode,
         arrivalAirport,
         arrivalAirportCode,
+        departureTime,
+        arrivalTime,
     } = useLocalSearchParams<{
         planId: string;
         departureDate?: string;
@@ -25,8 +27,10 @@ export default function AddFlightScreen() {
         departureAirportCode?: string;
         arrivalAirport?: string;
         arrivalAirportCode?: string;
+        departureTime?: string;
+        arrivalTime?: string;
     }>();
-    const {addFlight} = useUser();
+    const { addFlight } = useUser();
 
     const [formData, setFormData] = useState({
         departureDate: departureDate || '',
@@ -36,8 +40,8 @@ export default function AddFlightScreen() {
         departureAirportCode: departureAirportCode || '',
         arrivalAirport: arrivalAirport || '',
         arrivalAirportCode: arrivalAirportCode || '',
-        departureTime: '',
-        arrivalTime: '',
+        departureTime: departureTime || '',
+        arrivalTime: arrivalTime || '',
     });
 
     const handleBack = () => {
@@ -45,7 +49,7 @@ export default function AddFlightScreen() {
     };
 
     const updateFormData = (key: string, value: string) => {
-        setFormData((prev) => ({...prev, [key]: value}));
+        setFormData((prev) => ({ ...prev, [key]: value }));
     };
 
     const calculateDuration = (departure: string, arrival: string): string => {
@@ -128,7 +132,7 @@ export default function AddFlightScreen() {
             {/* 상단바 */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-                    <Feather name="arrow-left" size={24} color="#000"/>
+                    <Feather name="arrow-left" size={24} color="#000" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>항공편 추가</Text>
             </View>
@@ -141,7 +145,7 @@ export default function AddFlightScreen() {
                         <Text style={styles.input}>
                             {formData.departureDate ? formData.departureDate.replace(/-/g, '.') : ''}
                         </Text>
-                        <View style={styles.underline}/>
+                        <View style={styles.underline} />
                     </View>
                 </View>
 
@@ -152,7 +156,7 @@ export default function AddFlightScreen() {
                         <Text style={styles.input}>
                             {formData.airline}{formData.flightNumber}
                         </Text>
-                        <View style={styles.underline}/>
+                        <View style={styles.underline} />
                     </View>
                 </View>
 
@@ -186,7 +190,7 @@ export default function AddFlightScreen() {
                                     : formData.departureAirport
                                 : '공항을 검색해주세요'}
                         </Text>
-                        <View style={styles.underline}/>
+                        <View style={styles.underline} />
                     </TouchableOpacity>
                 </View>
 
@@ -220,7 +224,7 @@ export default function AddFlightScreen() {
                                     : formData.arrivalAirport
                                 : '공항을 검색해주세요'}
                         </Text>
-                        <View style={styles.underline}/>
+                        <View style={styles.underline} />
                     </TouchableOpacity>
                 </View>
 

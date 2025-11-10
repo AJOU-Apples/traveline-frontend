@@ -7,23 +7,47 @@ import { useUser } from '../src/context/UserContext';
 import * as ImagePicker from 'expo-image-picker';
 
 export default function PlaceDetailScreen() {
-    const { planId, dayNumber, placeId } = useLocalSearchParams<{ 
-        planId: string; 
-        dayNumber: string; 
+    const { planId, dayNumber, placeId } = useLocalSearchParams<{
+        planId: string;
+        dayNumber: string;
         placeId: string;
     }>();
-    
-    const { getTravelPlan, addPhotoToPlace, deletePhotoFromPlace } = useUser();
+
+    const { getTravelPlan, addPhotoToPlace, deletePhotoFromPlace, addExpenseToPlace, deleteExpenseFromPlace } = useUser();
     const [showTimeModal, setShowTimeModal] = useState(false);
     const [showExpenseModal, setShowExpenseModal] = useState(false);
     const [showMemoModal, setShowMemoModal] = useState(false);
     const [showMoreModal, setShowMoreModal] = useState(false);
     const [selectedTime, setSelectedTime] = useState('');
-    
+    const [expenseType, setExpenseType] = useState<'personal' | 'shared'>('personal');
+    const [expenseTitle, setExpenseTitle] = useState('');
+    const [expenseAmount, setExpenseAmount] = useState('');
+
     // 여행 데이터 및 장소 정보 가져오기
     const tripData = getTravelPlan(planId || '');
     const currentDay = tripData?.days.find(day => day.dayNumber === parseInt(dayNumber || '1'));
     const place = currentDay?.places.find(p => p.id === placeId);
+
+    // 목적지에 따른 통화 기호 반환
+    const getCurrencySymbol = () => {
+        const destination = tripData?.destination || '';
+
+        if (destination.includes('일본') || destination.includes('도쿄') || destination.includes('오사카') || destination.includes('교토')) {
+            return '¥';
+        } else if (destination.includes('미국') || destination.includes('뉴욕') || destination.includes('LA')) {
+            return '$';
+        } else if (destination.includes('유럽') || destination.includes('파리') || destination.includes('런던') || destination.includes('독일')) {
+            return '€';
+        } else if (destination.includes('중국') || destination.includes('베이징') || destination.includes('상하이')) {
+            return '¥';
+        } else if (destination.includes('태국') || destination.includes('방콕')) {
+            return '฿';
+        } else if (destination.includes('베트남') || destination.includes('호치민') || destination.includes('하노이')) {
+            return '₫';
+        }
+
+        return '₩'; // 기본값: 한국 원화
+    };
 
     if (!tripData || !place) {
         return (
@@ -51,7 +75,7 @@ export default function PlaceDetailScreen() {
     const handleCameraPress = async () => {
         // 카메라/갤러리에서 사진 선택
         const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        
+
         if (permissionResult.granted === false) {
             Alert.alert('권한 필요', '사진을 추가하려면 갤러리 접근 권한이 필요합니다.');
             return;
@@ -72,7 +96,7 @@ export default function PlaceDetailScreen() {
 
     const handleAddPhoto = async () => {
         const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        
+
         if (permissionResult.granted === false) {
             Alert.alert('권한 필요', '사진을 추가하려면 갤러리 접근 권한이 필요합니다.');
             return;
@@ -118,7 +142,56 @@ export default function PlaceDetailScreen() {
     };
 
     const handleExpenseAdd = () => {
+        setExpenseType('personal');
+        setExpenseTitle('');
+        setExpenseAmount('');
         setShowExpenseModal(true);
+    };
+
+    const handleSaveExpense = () => {
+        if (!expenseTitle.trim()) {
+            Alert.alert('알림', '지출 제목을 입력해주세요.');
+            return;
+        }
+
+        const amount = parseFloat(expenseAmount);
+        if (isNaN(amount) || amount <= 0) {
+            Alert.alert('알림', '유효한 금액을 입력해주세요.');
+            return;
+        }
+
+        if (planId && placeId) {
+            addExpenseToPlace(planId, parseInt(dayNumber || '1'), placeId, {
+                title: expenseTitle,
+                amount: amount,
+                type: expenseType,
+            });
+            setShowExpenseModal(false);
+            setExpenseTitle('');
+            setExpenseAmount('');
+        }
+    };
+
+    const handleDeleteExpense = (expenseId: string) => {
+        Alert.alert(
+            '지출 삭제',
+            '이 지출 내역을 삭제하시겠습니까?',
+            [
+                {
+                    text: '취소',
+                    style: 'cancel',
+                },
+                {
+                    text: '삭제',
+                    style: 'destructive',
+                    onPress: () => {
+                        if (planId && placeId) {
+                            deleteExpenseFromPlace(planId, parseInt(dayNumber || '1'), placeId, expenseId);
+                        }
+                    },
+                },
+            ]
+        );
     };
 
     const handleMemoAdd = () => {
@@ -180,7 +253,7 @@ export default function PlaceDetailScreen() {
                             <Text style={styles.placeAddress}>{place.address}</Text>
                         )}
                     </View>
-                    
+
                     {/* 운영시간 (임시 데이터) */}
                     {place.time && (
                         <Text style={styles.operatingHours}>{place.time}</Text>
@@ -206,15 +279,15 @@ export default function PlaceDetailScreen() {
                 </View>
 
                 {/* 사진 영역 */}
-                <ScrollView 
-                    horizontal 
+                <ScrollView
+                    horizontal
                     showsHorizontalScrollIndicator={false}
                     style={styles.photoSection}
                     contentContainerStyle={styles.photoSectionContent}
                 >
                     {/* 저장된 사진들 표시 */}
                     {place.photos?.map((photo) => (
-                        <TouchableOpacity 
+                        <TouchableOpacity
                             key={photo.id}
                             style={styles.photoContainer}
                             onLongPress={() => handleDeletePhoto(photo.id)}
@@ -223,7 +296,7 @@ export default function PlaceDetailScreen() {
                                 source={{ uri: photo.uri }}
                                 style={styles.photoThumbnail}
                             />
-                            <TouchableOpacity 
+                            <TouchableOpacity
                                 style={styles.deletePhotoButton}
                                 onPress={() => handleDeletePhoto(photo.id)}
                             >
@@ -231,7 +304,7 @@ export default function PlaceDetailScreen() {
                             </TouchableOpacity>
                         </TouchableOpacity>
                     ))}
-                    
+
                     {/* 사진 추가 버튼 */}
                     <TouchableOpacity style={styles.addPhotoButton} onPress={handleAddPhoto}>
                         <Feather name="plus" size={48} color="#C7C7C7" />
@@ -244,6 +317,31 @@ export default function PlaceDetailScreen() {
                 {/* 지출 섹션 */}
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>지출</Text>
+
+                    {/* 저장된 지출 목록 */}
+                    {place.expenses && place.expenses.length > 0 && (
+                        <View style={styles.expenseList}>
+                            {place.expenses.map((expense) => (
+                                <TouchableOpacity
+                                    key={expense.id}
+                                    style={styles.expenseItem}
+                                    onLongPress={() => handleDeleteExpense(expense.id)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={styles.expenseTypeText}>
+                                        {expense.type === 'personal' ? '개인' : '공동'}
+                                    </Text>
+                                    <Text style={styles.expenseAmountText}>
+                                        {expense.amount.toLocaleString()}{getCurrencySymbol()}
+                                    </Text>
+                                    <Text style={styles.expenseTitleText}>
+                                        {expense.title}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    )}
+
                     <TouchableOpacity style={styles.addButton} onPress={handleExpenseAdd}>
                         <Feather name="plus" size={12} color="#fff" />
                         <Text style={styles.addButtonText}>지출 추가</Text>
@@ -270,13 +368,13 @@ export default function PlaceDetailScreen() {
                 animationType="fade"
                 onRequestClose={() => setShowMoreModal(false)}
             >
-                <TouchableOpacity 
-                    style={styles.modalOverlay} 
+                <TouchableOpacity
+                    style={styles.modalOverlay}
                     activeOpacity={1}
                     onPress={() => setShowMoreModal(false)}
                 >
                     <View style={styles.bottomSheet}>
-                        <TouchableOpacity 
+                        <TouchableOpacity
                             style={styles.bottomSheetOption}
                             onPress={handleDeletePlace}
                         >
@@ -293,8 +391,8 @@ export default function PlaceDetailScreen() {
                 animationType="fade"
                 onRequestClose={() => setShowTimeModal(false)}
             >
-                <TouchableOpacity 
-                    style={styles.modalOverlay} 
+                <TouchableOpacity
+                    style={styles.modalOverlay}
                     activeOpacity={1}
                     onPress={() => setShowTimeModal(false)}
                 >
@@ -311,7 +409,7 @@ export default function PlaceDetailScreen() {
                             <TouchableOpacity onPress={() => setShowTimeModal(false)}>
                                 <Text style={styles.modalCancelText}>취소</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity 
+                            <TouchableOpacity
                                 onPress={() => {
                                     // TODO: 시간 저장 구현
                                     console.log('Save time:', selectedTime);
@@ -333,20 +431,34 @@ export default function PlaceDetailScreen() {
                 animationType="fade"
                 onRequestClose={() => setShowExpenseModal(false)}
             >
-                <TouchableOpacity 
-                    style={styles.modalOverlay} 
+                <TouchableOpacity
+                    style={styles.modalOverlay}
                     activeOpacity={1}
                     onPress={() => setShowExpenseModal(false)}
                 >
                     <View style={styles.expenseModalContent} onStartShouldSetResponder={() => true}>
                         <View style={styles.expenseTypeRow}>
-                            <TouchableOpacity style={styles.expenseTypeButton}>
-                                <MaterialIcons name="check-box" size={24} color="#088CDA" />
-                                <Text style={styles.expenseTypeText}>개인</Text>
+                            <TouchableOpacity
+                                style={styles.expenseTypeButton}
+                                onPress={() => setExpenseType('personal')}
+                            >
+                                <MaterialIcons
+                                    name={expenseType === 'personal' ? "check-box" : "check-box-outline-blank"}
+                                    size={24}
+                                    color={expenseType === 'personal' ? "#088CDA" : "#C7C7C7"}
+                                />
+                                <Text style={styles.expenseTypeButtonText}>개인</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.expenseTypeButton}>
-                                <MaterialIcons name="check-box-outline-blank" size={24} color="#C7C7C7" />
-                                <Text style={styles.expenseTypeText}>공동</Text>
+                            <TouchableOpacity
+                                style={styles.expenseTypeButton}
+                                onPress={() => setExpenseType('shared')}
+                            >
+                                <MaterialIcons
+                                    name={expenseType === 'shared' ? "check-box" : "check-box-outline-blank"}
+                                    size={24}
+                                    color={expenseType === 'shared' ? "#088CDA" : "#C7C7C7"}
+                                />
+                                <Text style={styles.expenseTypeButtonText}>공동</Text>
                             </TouchableOpacity>
                         </View>
 
@@ -356,29 +468,31 @@ export default function PlaceDetailScreen() {
                                 style={styles.modalInput}
                                 placeholder="예: 신주큐 교엔 스타벅스 카페라떼"
                                 placeholderTextColor="#9E9E9E"
+                                value={expenseTitle}
+                                onChangeText={setExpenseTitle}
                             />
                         </View>
 
                         <View style={styles.inputGroup}>
                             <Text style={styles.inputLabel}>금액</Text>
-                            <TextInput
-                                style={styles.modalInput}
-                                placeholder="금액을 입력하세요"
-                                placeholderTextColor="#9E9E9E"
-                                keyboardType="numeric"
-                            />
+                            <View style={styles.amountInputContainer}>
+                                <TextInput
+                                    style={styles.amountInput}
+                                    placeholder="금액을 입력하세요"
+                                    placeholderTextColor="#9E9E9E"
+                                    keyboardType="numeric"
+                                    value={expenseAmount}
+                                    onChangeText={setExpenseAmount}
+                                />
+                                <Text style={styles.currencySymbol}>{getCurrencySymbol()}</Text>
+                            </View>
                         </View>
 
                         <View style={styles.modalButtons}>
                             <TouchableOpacity onPress={() => setShowExpenseModal(false)}>
-                                <Text style={styles.modalCancelText}>삭제하기</Text>
+                                <Text style={styles.modalCancelText}>취소</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity 
-                                onPress={() => {
-                                    setShowExpenseModal(false);
-                                    Alert.alert('안내', '지출 저장 기능은 추후 구현 예정입니다.');
-                                }}
-                            >
+                            <TouchableOpacity onPress={handleSaveExpense}>
                                 <Text style={styles.modalConfirmText}>확인</Text>
                             </TouchableOpacity>
                         </View>
@@ -393,8 +507,8 @@ export default function PlaceDetailScreen() {
                 animationType="fade"
                 onRequestClose={() => setShowMemoModal(false)}
             >
-                <TouchableOpacity 
-                    style={styles.modalOverlay} 
+                <TouchableOpacity
+                    style={styles.modalOverlay}
                     activeOpacity={1}
                     onPress={() => setShowMemoModal(false)}
                 >
@@ -412,7 +526,7 @@ export default function PlaceDetailScreen() {
                             <TouchableOpacity onPress={() => setShowMemoModal(false)}>
                                 <Text style={styles.modalCancelText}>삭제하기</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity 
+                            <TouchableOpacity
                                 onPress={() => {
                                     setShowMemoModal(false);
                                     Alert.alert('안내', '메모 저장 기능은 추후 구현 예정입니다.');
@@ -490,7 +604,7 @@ const styles = StyleSheet.create({
     },
     placeName: {
         fontSize: 16,
-        fontWeight: '600',
+        fontWeight: '700',
         lineHeight: 24,
         letterSpacing: -0.2,
         color: '#000',
@@ -596,7 +710,7 @@ const styles = StyleSheet.create({
     },
     sectionTitle: {
         fontSize: 16,
-        fontWeight: '600',
+        fontWeight: '700',
         lineHeight: 24,
         letterSpacing: -0.2,
         color: '#000',
@@ -687,7 +801,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 4,
     },
-    expenseTypeText: {
+    expenseTypeButtonText: {
         fontSize: 14,
         lineHeight: 18,
         letterSpacing: -0.18,
@@ -724,6 +838,64 @@ const styles = StyleSheet.create({
     memoInput: {
         height: 80,
         marginBottom: 16,
+    },
+    expenseList: {
+        marginBottom: 8,
+        gap: 4,
+    },
+    expenseItem: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        paddingVertical: 2,
+    },
+    expenseTypeText: {
+        fontSize: 16,
+        fontWeight: '700',
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#088CDA',
+        width: 50,
+    },
+    expenseAmountText: {
+        fontSize: 16,
+        fontWeight: '700',
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#000',
+        width: 100,
+        textAlign: 'left',
+        marginRight: 12,
+    },
+    expenseTitleText: {
+        fontSize: 16,
+        fontWeight: '700',
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#000',
+        flex: 1,
+    },
+    amountInputContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderBottomWidth: 1,
+        borderBottomColor: '#E0E0E0',
+        paddingVertical: 8,
+    },
+    amountInput: {
+        flex: 1,
+        fontSize: 16,
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#000',
+        padding: 0,
+    },
+    currencySymbol: {
+        fontSize: 16,
+        fontWeight: '600',
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#585858',
+        marginLeft: 8,
     },
 });
 

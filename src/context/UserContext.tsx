@@ -14,6 +14,14 @@ export type Photo = {
   timestamp: number;
 };
 
+export type Expense = {
+  id: string;
+  title: string;
+  amount: number;
+  type: 'personal' | 'shared'; // 개인 or 공동
+  timestamp: number;
+};
+
 export type Place = {
   id: string;
   name: string;
@@ -23,6 +31,7 @@ export type Place = {
   latitude?: number;
   longitude?: number;
   photos?: Photo[];
+  expenses?: Expense[];
 };
 
 export type TravelDay = {
@@ -93,6 +102,9 @@ type UserContextValue = {
   reorderPlaces: (planId: string, dayNumber: number, fromIndex: number, toIndex: number) => void;
   addPhotoToPlace: (planId: string, dayNumber: number, placeId: string, photoUri: string) => void;
   deletePhotoFromPlace: (planId: string, dayNumber: number, placeId: string, photoId: string) => void;
+  // Expense methods
+  addExpenseToPlace: (planId: string, dayNumber: number, placeId: string, expense: Omit<Expense, 'id' | 'timestamp'>) => void;
+  deleteExpenseFromPlace: (planId: string, dayNumber: number, placeId: string, expenseId: string) => void;
   // Flight methods
   getFlightsByPlan: (planId: string) => Flight[];
   addFlight: (flight: Omit<Flight, 'id'>) => string;
@@ -266,6 +278,68 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     );
   };
 
+  // Expense methods
+  const addExpenseToPlace = (planId: string, dayNumber: number, placeId: string, expense: Omit<Expense, 'id' | 'timestamp'>) => {
+    const expenseId = `expense_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const newExpense: Expense = {
+      ...expense,
+      id: expenseId,
+      timestamp: Date.now(),
+    };
+
+    setTravelPlans((prev) =>
+      prev.map((plan) => {
+        if (plan.id !== planId) return plan;
+
+        return {
+          ...plan,
+          days: plan.days.map((day) => {
+            if (day.dayNumber !== dayNumber) return day;
+
+            return {
+              ...day,
+              places: day.places.map((place) => {
+                if (place.id !== placeId) return place;
+
+                return {
+                  ...place,
+                  expenses: [...(place.expenses || []), newExpense],
+                };
+              }),
+            };
+          }),
+        };
+      })
+    );
+  };
+
+  const deleteExpenseFromPlace = (planId: string, dayNumber: number, placeId: string, expenseId: string) => {
+    setTravelPlans((prev) =>
+      prev.map((plan) => {
+        if (plan.id !== planId) return plan;
+
+        return {
+          ...plan,
+          days: plan.days.map((day) => {
+            if (day.dayNumber !== dayNumber) return day;
+
+            return {
+              ...day,
+              places: day.places.map((place) => {
+                if (place.id !== placeId) return place;
+
+                return {
+                  ...place,
+                  expenses: (place.expenses || []).filter((expense) => expense.id !== expenseId),
+                };
+              }),
+            };
+          }),
+        };
+      })
+    );
+  };
+
   // Flight methods
   const getFlightsByPlan = (planId: string) => {
     return flights.filter((flight) => flight.travelPlanId === planId);
@@ -329,6 +403,8 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     reorderPlaces,
     addPhotoToPlace,
     deletePhotoFromPlace,
+    addExpenseToPlace,
+    deleteExpenseFromPlace,
     getFlightsByPlan,
     addFlight,
     updateFlight,
