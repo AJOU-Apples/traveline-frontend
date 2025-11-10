@@ -57,6 +57,7 @@ export type Flight = {
   duration?: string; // 2시간 30분 소요
   bookingReference?: string; // 예약 번호
   likes?: number; // 좋아요 수
+  isSelected?: boolean; // 선택 여부
 };
 
 export type Accommodation = {
@@ -75,6 +76,7 @@ export type Accommodation = {
   website?: string;
   memo?: string;
   likes?: number; // 좋아요 수
+  isSelected?: boolean; // 선택 여부
 };
 
 export type TravelPlan = {
@@ -110,11 +112,13 @@ type UserContextValue = {
   addFlight: (flight: Omit<Flight, 'id'>) => string;
   updateFlight: (id: string, flight: Partial<Flight>) => void;
   deleteFlight: (id: string) => void;
+  toggleFlightSelection: (id: string) => void;
   // Accommodation methods
   getAccommodationsByPlan: (planId: string) => Accommodation[];
   addAccommodation: (accommodation: Omit<Accommodation, 'id'>) => string;
   updateAccommodation: (id: string, accommodation: Partial<Accommodation>) => void;
   deleteAccommodation: (id: string) => void;
+  toggleAccommodationSelection: (id: string) => void;
 };
 
 const defaultTrips: Trip[] = [
@@ -363,6 +367,14 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     setFlights((prev) => prev.filter((flight) => flight.id !== id));
   };
 
+  const toggleFlightSelection = (id: string) => {
+    setFlights((prev) =>
+      prev.map((flight) =>
+        flight.id === id ? { ...flight, isSelected: !flight.isSelected } : flight
+      )
+    );
+  };
+
   // Accommodation methods
   const getAccommodationsByPlan = (planId: string) => {
     return accommodations.filter((acc) => acc.travelPlanId === planId);
@@ -388,6 +400,14 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     setAccommodations((prev) => prev.filter((acc) => acc.id !== id));
   };
 
+  const toggleAccommodationSelection = (id: string) => {
+    setAccommodations((prev) =>
+      prev.map((acc) =>
+        acc.id === id ? { ...acc, isSelected: !acc.isSelected } : acc
+      )
+    );
+  };
+
   const value: UserContextValue = {
     username,
     upcomingTrip,
@@ -409,10 +429,12 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     addFlight,
     updateFlight,
     deleteFlight,
+    toggleFlightSelection,
     getAccommodationsByPlan,
     addAccommodation,
     updateAccommodation,
     deleteAccommodation,
+    toggleAccommodationSelection,
   };
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;

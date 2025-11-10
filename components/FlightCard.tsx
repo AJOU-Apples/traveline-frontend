@@ -1,22 +1,30 @@
 import React from 'react';
-import {View, StyleSheet, TouchableOpacity} from 'react-native';
-import {Text} from 'react-native-paper';
-import {Feather} from '@expo/vector-icons';
-import {Flight} from '../src/context/UserContext';
+import { View, StyleSheet, TouchableOpacity } from 'react-native';
+import { Text } from 'react-native-paper';
+import { Feather } from '@expo/vector-icons';
+import { Flight } from '../src/context/UserContext';
 
 type FlightCardProps = {
     flight: Flight;
     onMorePress?: () => void;
 };
 
-export default function FlightCard({flight, onMorePress}: FlightCardProps) {
+export default function FlightCard({ flight, onMorePress }: FlightCardProps) {
     const fullFlightNumber = `${flight.airline}${flight.flightNumber}`;
+    const isSelected = flight.isSelected || false;
 
     return (
         <View style={styles.container}>
-            <View style={styles.card}>
+            <View style={[styles.card, isSelected && styles.cardSelected]}>
                 <View style={styles.content}>
-                    <Text style={styles.flightNumber}>{fullFlightNumber}</Text>
+                    <View style={styles.flightNumberRow}>
+                        {isSelected && (
+                            <View style={styles.selectedBadge}>
+                                <Text style={styles.selectedBadgeText}>selected</Text>
+                            </View>
+                        )}
+                        <Text style={styles.flightNumber}>{fullFlightNumber}</Text>
+                    </View>
                     <Text style={styles.route}>
                         {flight.departureAirport}({flight.departureAirportCode})
                         → {flight.arrivalAirport}({flight.arrivalAirportCode})
@@ -28,7 +36,7 @@ export default function FlightCard({flight, onMorePress}: FlightCardProps) {
                 </View>
                 <View style={styles.footer}>
                     <View style={styles.likes}>
-                        <Feather name="heart" size={12} color="#585858"/>
+                        <Feather name="heart" size={12} color="#585858" />
                         <Text style={styles.likesText}>좋아요</Text>
                         <Text style={styles.likesCount}>{flight.likes || 0}</Text>
                     </View>
@@ -37,7 +45,7 @@ export default function FlightCard({flight, onMorePress}: FlightCardProps) {
             </View>
             {onMorePress && (
                 <TouchableOpacity style={styles.moreButton} onPress={onMorePress}>
-                    <Feather name="more-horizontal" size={24} color="#000"/>
+                    <Feather name="more-horizontal" size={24} color="#000" />
                 </TouchableOpacity>
             )}
         </View>
@@ -66,10 +74,35 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.05,
         shadowRadius: 4,
         elevation: 2,
+        position: 'relative',
+    },
+    cardSelected: {
+        borderColor: '#088CDA',
+        borderWidth: 2,
+        backgroundColor: '#F0F8FF',
     },
     content: {
         gap: 8,
         marginBottom: 16,
+    },
+    flightNumberRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    selectedBadge: {
+        backgroundColor: '#088CDA',
+        borderRadius: 12,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    selectedBadgeText: {
+        fontSize: 10,
+        lineHeight: 14,
+        color: '#fff',
+        fontWeight: '600',
     },
     flightNumber: {
         fontSize: 16,

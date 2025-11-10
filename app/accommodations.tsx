@@ -8,9 +8,9 @@ import AccommodationCard from '../components/AccommodationCard';
 
 export default function AccommodationsScreen() {
     const {planId} = useLocalSearchParams<{ planId: string }>();
-    const {getAccommodationsByPlan, deleteAccommodation} = useUser();
+    const {getAccommodationsByPlan, deleteAccommodation, toggleAccommodationSelection} = useUser();
     const [selectedAccommodationId, setSelectedAccommodationId] = useState<string | null>(null);
-    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [showActionModal, setShowActionModal] = useState(false);
 
     const accommodations = planId ? getAccommodationsByPlan(planId) : [];
 
@@ -27,29 +27,40 @@ export default function AccommodationsScreen() {
 
     const handleMorePress = (accommodationId: string) => {
         setSelectedAccommodationId(accommodationId);
-        setShowDeleteModal(true);
+        setShowActionModal(true);
+    };
+
+    const handleToggleSelection = () => {
+        if (selectedAccommodationId) {
+            toggleAccommodationSelection(selectedAccommodationId);
+            setShowActionModal(false);
+            setSelectedAccommodationId(null);
+        }
     };
 
     const handleDelete = () => {
         if (selectedAccommodationId) {
+            setShowActionModal(false);
             Alert.alert('삭제 확인', '숙소를 삭제하시겠습니까?', [
                 {
                     text: '취소',
                     style: 'cancel',
-                    onPress: () => setShowDeleteModal(false),
+                    onPress: () => setSelectedAccommodationId(null),
                 },
                 {
                     text: '삭제',
                     style: 'destructive',
                     onPress: () => {
                         deleteAccommodation(selectedAccommodationId);
-                        setShowDeleteModal(false);
                         setSelectedAccommodationId(null);
                     },
                 },
             ]);
         }
     };
+
+    const selectedAccommodation = accommodations.find((a) => a.id === selectedAccommodationId);
+    const isAccommodationSelected = selectedAccommodation?.isSelected || false;
 
     return (
         <View style={styles.container}>
@@ -87,14 +98,19 @@ export default function AccommodationsScreen() {
                 )}
             </ScrollView>
 
-            {/* 삭제 모달 */}
-            <Modal visible={showDeleteModal} transparent animationType="fade">
+            {/* 액션 모달 */}
+            <Modal visible={showActionModal} transparent animationType="fade">
                 <TouchableOpacity
                     style={styles.modalOverlay}
                     activeOpacity={1}
-                    onPress={() => setShowDeleteModal(false)}
+                    onPress={() => setShowActionModal(false)}
                 >
                     <View style={styles.bottomSheet}>
+                        <TouchableOpacity style={styles.actionButton} onPress={handleToggleSelection}>
+                            <Text style={styles.actionButtonText}>
+                                {isAccommodationSelected ? '선택 해제하기' : '선택하기'}
+                            </Text>
+                        </TouchableOpacity>
                         <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
                             <Text style={styles.deleteButtonText}>삭제하기</Text>
                         </TouchableOpacity>
@@ -191,11 +207,21 @@ const styles = StyleSheet.create({
         borderTopRightRadius: 16,
         paddingBottom: Platform.OS === 'ios' ? 34 : 16,
     },
-    deleteButton: {
+    actionButton: {
         paddingVertical: 16,
         paddingHorizontal: 20,
         borderBottomWidth: 1,
         borderBottomColor: '#ECECEC',
+    },
+    actionButtonText: {
+        fontSize: 16,
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#088CDA',
+    },
+    deleteButton: {
+        paddingVertical: 16,
+        paddingHorizontal: 20,
     },
     deleteButtonText: {
         fontSize: 16,
