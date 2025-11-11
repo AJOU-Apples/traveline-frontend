@@ -153,9 +153,9 @@ export default function PlanDetailScreen() {
     const flights = planId ? getFlightsByPlan(planId) : [];
     const accommodations = planId ? getAccommodationsByPlan(planId) : [];
 
-    // 선택된 항공편과 숙소 찾기
-    const selectedFlight = flights.find(f => f.isSelected);
-    const selectedAccommodation = accommodations.find(a => a.isSelected);
+    // 선택된 항공편과 숙소 찾기 (배열로 가져오기)
+    const selectedFlights = flights.filter(f => f.isSelected);
+    const selectedAccommodations = accommodations.filter(a => a.isSelected);
 
     // 목적지에 따른 통화 기호 반환
     const getCurrencySymbol = () => {
@@ -593,11 +593,11 @@ export default function PlanDetailScreen() {
                     <TouchableOpacity
                         style={[
                             styles.quickActionButton,
-                            selectedFlight && styles.quickActionButtonFilled
+                            selectedFlights.length > 0 && styles.quickActionButtonFilled
                         ]}
                         onPress={handleFlightsPress}
                     >
-                        {!selectedFlight ? (
+                        {selectedFlights.length === 0 ? (
                             <>
                                 <View style={styles.iconCircle}>
                                     <Feather name="plus" size={10} color="#C7C7C7" />
@@ -605,17 +605,17 @@ export default function PlanDetailScreen() {
                                 <Text style={styles.quickActionText}>항공편</Text>
                             </>
                         ) : (
-                            <Text style={styles.quickActionText}>항공편</Text>
+                            <Text style={styles.quickActionText}>항공편 {selectedFlights.length}</Text>
                         )}
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={[
                             styles.quickActionButton,
-                            selectedAccommodation && styles.quickActionButtonFilled
+                            selectedAccommodations.length > 0 && styles.quickActionButtonFilled
                         ]}
                         onPress={handleAccommodationsPress}
                     >
-                        {!selectedAccommodation ? (
+                        {selectedAccommodations.length === 0 ? (
                             <>
                                 <View style={styles.iconCircle}>
                                     <Feather name="plus" size={10} color="#C7C7C7" />
@@ -623,7 +623,7 @@ export default function PlanDetailScreen() {
                                 <Text style={styles.quickActionText}>숙소</Text>
                             </>
                         ) : (
-                            <Text style={styles.quickActionText}>숙소</Text>
+                            <Text style={styles.quickActionText}>숙소 {selectedAccommodations.length}</Text>
                         )}
                     </TouchableOpacity>
                 </View>

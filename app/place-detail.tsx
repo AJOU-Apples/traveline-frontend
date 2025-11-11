@@ -4,7 +4,7 @@ import { Text } from 'react-native-paper';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { useUser } from '../src/context/UserContext';
-import * as ImagePicker from 'expo-image-picker';
+import LocationBasedImagePicker from '../components/LocationBasedImagePicker';
 
 export default function PlaceDetailScreen() {
     const { planId, dayNumber, placeId } = useLocalSearchParams<{
@@ -18,6 +18,7 @@ export default function PlaceDetailScreen() {
     const [showExpenseModal, setShowExpenseModal] = useState(false);
     const [showMemoModal, setShowMemoModal] = useState(false);
     const [showMoreModal, setShowMoreModal] = useState(false);
+    const [showImagePicker, setShowImagePicker] = useState(false);
     const [selectedTime, setSelectedTime] = useState('');
     const [expenseType, setExpenseType] = useState<'personal' | 'shared'>('personal');
     const [expenseTitle, setExpenseTitle] = useState('');
@@ -73,46 +74,19 @@ export default function PlaceDetailScreen() {
         setShowMoreModal(true);
     };
 
-    const handleCameraPress = async () => {
-        // 카메라/갤러리에서 사진 선택
-        const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-        if (permissionResult.granted === false) {
-            Alert.alert('권한 필요', '사진을 추가하려면 갤러리 접근 권한이 필요합니다.');
-            return;
-        }
-
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 0.8,
-        });
-
-        if (!result.canceled && planId && placeId) {
-            const photoUri = result.assets[0].uri;
-            addPhotoToPlace(planId, parseInt(dayNumber || '1'), placeId, photoUri);
-        }
+    const handleCameraPress = () => {
+        setShowImagePicker(true);
     };
 
-    const handleAddPhoto = async () => {
-        const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const handleAddPhoto = () => {
+        setShowImagePicker(true);
+    };
 
-        if (permissionResult.granted === false) {
-            Alert.alert('권한 필요', '사진을 추가하려면 갤러리 접근 권한이 필요합니다.');
-            return;
-        }
-
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 0.8,
-        });
-
-        if (!result.canceled && planId && placeId) {
-            const photoUri = result.assets[0].uri;
-            addPhotoToPlace(planId, parseInt(dayNumber || '1'), placeId, photoUri);
+    const handleSelectPhotos = (photoUris: string[]) => {
+        if (planId && placeId) {
+            photoUris.forEach(photoUri => {
+                addPhotoToPlace(planId, parseInt(dayNumber || '1'), placeId, photoUri);
+            });
         }
     };
 
@@ -572,6 +546,16 @@ export default function PlaceDetailScreen() {
                     </View>
                 </TouchableOpacity>
             </Modal>
+
+            {/* 위치 기반 이미지 피커 */}
+            <LocationBasedImagePicker
+                visible={showImagePicker}
+                onClose={() => setShowImagePicker(false)}
+                onSelectPhotos={handleSelectPhotos}
+                placeLatitude={place?.latitude}
+                placeLongitude={place?.longitude}
+                placeName={place?.name || '장소'}
+            />
         </View>
     );
 }
