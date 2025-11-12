@@ -47,10 +47,33 @@ export type Photo = {
 
 export type Expense = {
   id: string;
+  travelPlanId: string;
+  travelDayId?: string;
+  dayNumber?: number;
+  placeId?: string;
+  // 결제 정보
+  paidById: string;
+  paidByName: string;
+  // 지출 정보
   title: string;
   amount: number;
-  type: 'personal' | 'shared'; // 개인 or 공동
-  timestamp: number;
+  currency: string;
+  // 지출 타입
+  type: 'PERSONAL' | 'SHARED';
+  // 정산 정보
+  splitWith?: string[];
+  splitAmount?: number;
+  isSettled: boolean;
+  // 영수증
+  receiptImage?: string;
+  // 메모
+  memo?: string;
+  // 날짜 및 시간
+  expenseDate?: string;
+  expenseTime?: string;
+  // 타임스탬프
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type Place = {
@@ -231,9 +254,29 @@ type UserContextValue = {
   reorderPhotos: (placeId: string, visibility: 'PERSONAL' | 'SHARED', photoIds: string[]) => Promise<void>;
   // Memo methods
   updatePlaceMemo: (planId: string, dayNumber: number, placeId: string, memo: string) => Promise<void>;
-  // Expense methods (TODO: 백엔드 구현 후 활성화)
-  // addExpenseToPlace: (planId: string, dayNumber: number, placeId: string, expense: Omit<Expense, 'id' | 'timestamp'>) => Promise<void>;
-  // deleteExpenseFromPlace: (planId: string, dayNumber: number, placeId: string, expenseId: string) => Promise<void>;
+  // Expense methods
+  createExpense: (planId: string, dayNumber: number, placeId: string, expense: {
+    title: string;
+    amount: number;
+    currency?: string;
+    type: 'PERSONAL' | 'SHARED';
+    splitWith?: string[];
+    memo?: string;
+    expenseDate?: string;
+    expenseTime?: string;
+  }) => Promise<Expense>;
+  getExpensesByPlace: (placeId: string) => Promise<Expense[]>;
+  updateExpense: (expenseId: string, updates: {
+    title?: string;
+    amount?: number;
+    type?: 'PERSONAL' | 'SHARED';
+    splitWith?: string[];
+    isSettled?: boolean;
+    memo?: string;
+    expenseDate?: string;
+    expenseTime?: string;
+  }) => Promise<Expense>;
+  deleteExpense: (expenseId: string) => Promise<void>;
   // Flight methods
   getFlightsByPlan: (planId: string) => Flight[];
   addFlight: (flight: Omit<Flight, 'id'>) => string;
@@ -947,14 +990,244 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     }
   };
 
-  // TODO: 백엔드에 Expense Entity 구현 후 활성화
-  // const addExpenseToPlace = async (planId: string, dayNumber: number, placeId: string, expense: Omit<Expense, 'id' | 'timestamp'>) => {
-  //   throw new Error('Expense feature is not implemented in backend yet');
-  // };
+  // Expense methods
+  const createExpense = async (planId: string, dayNumber: number, placeId: string, expense: {
+    title: string;
+    amount: number;
+    currency?: string;
+    type: 'PERSONAL' | 'SHARED';
+    splitWith?: string[];
+    memo?: string;
+    expenseDate?: string;
+    expenseTime?: string;
+  }): Promise<Expense> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
 
-  // const deleteExpenseFromPlace = async (planId: string, dayNumber: number, placeId: string, expenseId: string) => {
-  //   throw new Error('Expense feature is not implemented in backend yet');
-  // };
+    try {
+      const createdExpense = await travelPlanApi.createExpense({
+        travelPlanId: parseInt(planId),
+        dayNumber: dayNumber,
+        placeId: parseInt(placeId),
+        title: expense.title,
+        amount: expense.amount,
+        currency: expense.currency,
+        type: expense.type,
+        splitWith: expense.splitWith?.map((id) => parseInt(id)),
+        memo: expense.memo,
+        expenseDate: expense.expenseDate,
+        expenseTime: expense.expenseTime,
+      });
+
+      const newExpense: Expense = {
+        id: createdExpense.id.toString(),
+        travelPlanId: createdExpense.travelPlanId.toString(),
+        travelDayId: createdExpense.travelDayId?.toString(),
+        dayNumber: createdExpense.dayNumber,
+        placeId: createdExpense.placeId?.toString(),
+        paidById: createdExpense.paidById.toString(),
+        paidByName: createdExpense.paidByName,
+        title: createdExpense.title,
+        amount: createdExpense.amount,
+        currency: createdExpense.currency,
+        type: createdExpense.type,
+        splitWith: createdExpense.splitWith?.map((id) => id.toString()),
+        splitAmount: createdExpense.splitAmount,
+        isSettled: createdExpense.isSettled,
+        receiptImage: createdExpense.receiptImage,
+        memo: createdExpense.memo,
+        expenseDate: createdExpense.expenseDate,
+        expenseTime: createdExpense.expenseTime,
+        createdAt: createdExpense.createdAt,
+        updatedAt: createdExpense.updatedAt,
+      };
+
+      // 상태 업데이트
+      setTravelPlans((prev) =>
+        prev.map((plan) => {
+          if (plan.id !== planId) return plan;
+
+          return {
+            ...plan,
+            days: plan.days.map((day) => {
+              if (day.dayNumber !== dayNumber) return day;
+
+              return {
+                ...day,
+                places: day.places.map((place) => {
+                  if (place.id !== placeId) return place;
+
+                  return {
+                    ...place,
+                    expenses: [...(place.expenses || []), newExpense],
+                  };
+                }),
+              };
+            }),
+          };
+        })
+      );
+
+      return newExpense;
+    } catch (error) {
+      console.error('Failed to create expense:', error);
+      throw error;
+    }
+  };
+
+  const getExpensesByPlace = async (placeId: string): Promise<Expense[]> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const expenses = await travelPlanApi.getExpensesByPlace(parseInt(placeId));
+
+      const convertedExpenses = expenses.map((expense) => ({
+        id: expense.id.toString(),
+        travelPlanId: expense.travelPlanId.toString(),
+        travelDayId: expense.travelDayId?.toString(),
+        dayNumber: expense.dayNumber,
+        placeId: expense.placeId?.toString(),
+        paidById: expense.paidById.toString(),
+        paidByName: expense.paidByName,
+        title: expense.title,
+        amount: expense.amount,
+        currency: expense.currency,
+        type: expense.type,
+        splitWith: expense.splitWith?.map((id) => id.toString()),
+        splitAmount: expense.splitAmount,
+        isSettled: expense.isSettled,
+        receiptImage: expense.receiptImage,
+        memo: expense.memo,
+        expenseDate: expense.expenseDate,
+        expenseTime: expense.expenseTime,
+        createdAt: expense.createdAt,
+        updatedAt: expense.updatedAt,
+      }));
+
+      // 상태 업데이트
+      setTravelPlans((prev) =>
+        prev.map((plan) => ({
+          ...plan,
+          days: plan.days.map((day) => ({
+            ...day,
+            places: day.places.map((place) => {
+              if (place.id === placeId) {
+                return {
+                  ...place,
+                  expenses: convertedExpenses,
+                };
+              }
+              return place;
+            }),
+          })),
+        }))
+      );
+
+      return convertedExpenses;
+    } catch (error) {
+      console.error('Failed to get expenses by place:', error);
+      throw error;
+    }
+  };
+
+  const updateExpense = async (expenseId: string, updates: {
+    title?: string;
+    amount?: number;
+    type?: 'PERSONAL' | 'SHARED';
+    splitWith?: string[];
+    isSettled?: boolean;
+    memo?: string;
+    expenseDate?: string;
+    expenseTime?: string;
+  }): Promise<Expense> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const updatedExpense = await travelPlanApi.updateExpense(
+        parseInt(expenseId),
+        {
+          ...updates,
+          splitWith: updates.splitWith?.map((id) => parseInt(id)),
+        }
+      );
+
+      const convertedExpense: Expense = {
+        id: updatedExpense.id.toString(),
+        travelPlanId: updatedExpense.travelPlanId.toString(),
+        travelDayId: updatedExpense.travelDayId?.toString(),
+        dayNumber: updatedExpense.dayNumber,
+        placeId: updatedExpense.placeId?.toString(),
+        paidById: updatedExpense.paidById.toString(),
+        paidByName: updatedExpense.paidByName,
+        title: updatedExpense.title,
+        amount: updatedExpense.amount,
+        currency: updatedExpense.currency,
+        type: updatedExpense.type,
+        splitWith: updatedExpense.splitWith?.map((id) => id.toString()),
+        splitAmount: updatedExpense.splitAmount,
+        isSettled: updatedExpense.isSettled,
+        receiptImage: updatedExpense.receiptImage,
+        memo: updatedExpense.memo,
+        expenseDate: updatedExpense.expenseDate,
+        expenseTime: updatedExpense.expenseTime,
+        createdAt: updatedExpense.createdAt,
+        updatedAt: updatedExpense.updatedAt,
+      };
+
+      // 상태 업데이트
+      setTravelPlans((prev) =>
+        prev.map((plan) => ({
+          ...plan,
+          days: plan.days.map((day) => ({
+            ...day,
+            places: day.places.map((place) => ({
+              ...place,
+              expenses: place.expenses?.map((expense) =>
+                expense.id === expenseId ? convertedExpense : expense
+              ),
+            })),
+          })),
+        }))
+      );
+
+      return convertedExpense;
+    } catch (error) {
+      console.error('Failed to update expense:', error);
+      throw error;
+    }
+  };
+
+  const deleteExpense = async (expenseId: string) => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      await travelPlanApi.deleteExpense(parseInt(expenseId));
+
+      // 상태 업데이트
+      setTravelPlans((prev) =>
+        prev.map((plan) => ({
+          ...plan,
+          days: plan.days.map((day) => ({
+            ...day,
+            places: day.places.map((place) => ({
+              ...place,
+              expenses: place.expenses?.filter((expense) => expense.id !== expenseId),
+            })),
+          })),
+        }))
+      );
+    } catch (error) {
+      console.error('Failed to delete expense:', error);
+      throw error;
+    }
+  };
 
   // Flight methods
   const getFlightsByPlan = (planId: string) => {
@@ -1046,8 +1319,10 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     deletePhoto,
     reorderPhotos,
     updatePlaceMemo,
-    // addExpenseToPlace, // TODO: 백엔드 구현 후 활성화
-    // deleteExpenseFromPlace, // TODO: 백엔드 구현 후 활성화
+    createExpense,
+    getExpensesByPlace,
+    updateExpense,
+    deleteExpense,
     getFlightsByPlan,
     addFlight,
     updateFlight,

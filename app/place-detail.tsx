@@ -3,7 +3,7 @@ import { View, StyleSheet, TouchableOpacity, ScrollView, Platform, Image, Modal,
 import { Text } from 'react-native-paper';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
-import { useUser } from '../src/context/UserContext';
+import { useUser, Expense } from '../src/context/UserContext';
 import LocationBasedImagePicker from '../components/LocationBasedImagePicker';
 import { getFullImageUrl } from '../src/utils/travelPlanApi';
 
@@ -16,7 +16,7 @@ export default function PlaceDetailScreen() {
         placeId: string;
     }>();
 
-    const { username, getTravelPlan, uploadPhotoToPlace, getPhotosByPlace, deletePhoto, reorderPhotos, updatePlaceMemo, deletePlaceFromDay } = useUser();
+    const { username, authUser, getTravelPlan, uploadPhotoToPlace, getPhotosByPlace, deletePhoto, reorderPhotos, updatePlaceMemo, deletePlaceFromDay, createExpense, getExpensesByPlace, updateExpense, deleteExpense } = useUser();
     const [showTimeModal, setShowTimeModal] = useState(false);
     const [showExpenseModal, setShowExpenseModal] = useState(false);
     const [showMemoModal, setShowMemoModal] = useState(false);
@@ -25,21 +25,35 @@ export default function PlaceDetailScreen() {
     const [showImageModal, setShowImageModal] = useState(false);
     const [selectedImageUri, setSelectedImageUri] = useState<string>('');
     const [isLoadingPhotos, setIsLoadingPhotos] = useState(false);
+    const [isLoadingExpenses, setIsLoadingExpenses] = useState(false);
     const [selectedTime, setSelectedTime] = useState('');
-    const [expenseType, setExpenseType] = useState<'personal' | 'shared'>('personal');
+    const [expenseType, setExpenseType] = useState<'PERSONAL' | 'SHARED'>('PERSONAL');
     const [expenseTitle, setExpenseTitle] = useState('');
     const [expenseAmount, setExpenseAmount] = useState('');
+    const [expenseMemo, setExpenseMemo] = useState('');
+    const [expensePaidBy, setExpensePaidBy] = useState<string>('');
+    const [showPaidByDropdown, setShowPaidByDropdown] = useState(false);
+    const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
     const [memoText, setMemoText] = useState('');
     const [failedImageIds, setFailedImageIds] = useState<Set<string>>(new Set());
     const [selectedVisibility, setSelectedVisibility] = useState<'PERSONAL' | 'SHARED'>('SHARED');
 
     // 중복 로딩 방지를 위한 ref
     const isLoadingRef = useRef(false);
+    const isLoadingExpensesRef = useRef(false);
 
     // 여행 데이터 및 장소 정보 가져오기
     const tripData = getTravelPlan(planId || '');
     const currentDay = tripData?.days.find(day => day.dayNumber === parseInt(dayNumber || '1'));
     const place = currentDay?.places.find(p => p.id === placeId);
+
+    // 참가자 목록 (임시로 현재 사용자 + 더미 데이터)
+    // TODO: 백엔드에서 실제 참가자 목록 가져오기
+    const participants = [
+        { id: authUser?.id.toString() || '1', name: username || '나' },
+        { id: '2', name: '홍길동' },
+        { id: '3', name: '김철수' },
+    ];
 
     // 디버깅: place 데이터 확인
     useEffect(() => {
@@ -73,10 +87,31 @@ export default function PlaceDetailScreen() {
         }
     };
 
-    // 화면 포커스될 때 사진 로드 (1회만)
+    // 지출 로드 함수
+    const loadExpenses = async () => {
+        if (!placeId || isLoadingExpensesRef.current) return;
+
+        console.log('💰 [loadExpenses] Starting to load expenses for placeId:', placeId);
+        isLoadingExpensesRef.current = true;
+        setIsLoadingExpenses(true);
+
+        try {
+            const expenses = await getExpensesByPlace(placeId);
+            console.log('💰 [loadExpenses] Loaded expenses:', expenses?.length || 0, 'expenses');
+        } catch (error) {
+            console.error('❌ [loadExpenses] Failed to load expenses:', error);
+            Alert.alert('오류', '지출을 불러오는 중 오류가 발생했습니다.');
+        } finally {
+            setIsLoadingExpenses(false);
+            isLoadingExpensesRef.current = false;
+        }
+    };
+
+    // 화면 포커스될 때 사진 및 지출 로드 (1회만)
     useFocusEffect(
         useCallback(() => {
             loadPhotos();
+            loadExpenses();
             // eslint-disable-next-line react-hooks/exhaustive-deps
         }, [placeId]) // placeId가 변경될 때만 실행
     );
@@ -219,13 +254,107 @@ export default function PlaceDetailScreen() {
         setShowTimeModal(true);
     };
 
-    const handleExpenseAdd = () => {
-        // TODO: 백엔드에 Expense Entity 구현 후 활성화
-        Alert.alert('준비 중', '지출 기능은 현재 개발 중입니다.');
-        // setExpenseType('personal');
-        // setExpenseTitle('');
-        // setExpenseAmount('');
-        // setShowExpenseModal(true);
+    const handleExpenseAdd = (type: 'PERSONAL' | 'SHARED') => {
+        setExpenseType(type);
+        setExpenseTitle('');
+        setExpenseAmount('');
+        setExpenseMemo('');
+        setExpensePaidBy(authUser?.id.toString() || ''); // 기본값: 현재 사용자
+        setShowPaidByDropdown(false);
+        setEditingExpenseId(null);
+        setShowExpenseModal(true);
+    };
+
+    const handleExpenseEdit = (expense: Expense) => {
+        setExpenseType(expense.type);
+        setExpenseTitle(expense.title);
+        setExpenseAmount(expense.amount.toString());
+        setExpenseMemo(expense.memo || '');
+        setExpensePaidBy(expense.paidById);
+        setShowPaidByDropdown(false);
+        setEditingExpenseId(expense.id);
+        setShowExpenseModal(true);
+    };
+
+    const handleExpenseSave = async () => {
+        if (!planId || !placeId) return;
+
+        if (!expenseTitle.trim()) {
+            Alert.alert('오류', '지출 제목을 입력해주세요.');
+            return;
+        }
+
+        if (!expenseAmount.trim() || isNaN(parseFloat(expenseAmount))) {
+            Alert.alert('오류', '올바른 금액을 입력해주세요.');
+            return;
+        }
+
+        if (expenseType === 'SHARED' && !expensePaidBy) {
+            Alert.alert('오류', '지불한 사람을 선택해주세요.');
+            return;
+        }
+
+        try {
+            if (editingExpenseId) {
+                // 수정
+                await updateExpense(editingExpenseId, {
+                    title: expenseTitle,
+                    amount: parseFloat(expenseAmount),
+                    type: expenseType,
+                    memo: expenseMemo.trim() || undefined,
+                });
+                Alert.alert('완료', '지출이 수정되었습니다.');
+            } else {
+                // 생성
+                await createExpense(
+                    planId,
+                    parseInt(dayNumber || '1'),
+                    placeId,
+                    {
+                        title: expenseTitle,
+                        amount: parseFloat(expenseAmount),
+                        type: expenseType,
+                        memo: expenseMemo.trim() || undefined,
+                    }
+                );
+                Alert.alert('완료', `지출이 ${expenseType === 'SHARED' ? '공용' : '개인'} 지출에 추가되었습니다.`);
+            }
+
+            setShowExpenseModal(false);
+            setShowPaidByDropdown(false);
+            setEditingExpenseId(null);
+            await loadExpenses();
+        } catch (error) {
+            console.error('Failed to save expense:', error);
+            Alert.alert('오류', editingExpenseId ? '지출 수정 중 오류가 발생했습니다.' : '지출 추가 중 오류가 발생했습니다.');
+        }
+    };
+
+    const handleExpenseDelete = (expenseId: string) => {
+        Alert.alert(
+            '지출 삭제',
+            '이 지출을 삭제하시겠습니까?',
+            [
+                {
+                    text: '취소',
+                    style: 'cancel',
+                },
+                {
+                    text: '삭제',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await deleteExpense(expenseId);
+                            await loadExpenses();
+                            Alert.alert('완료', '지출이 삭제되었습니다.');
+                        } catch (error) {
+                            console.error('Failed to delete expense:', error);
+                            Alert.alert('오류', '지출 삭제 중 오류가 발생했습니다.');
+                        }
+                    },
+                },
+            ]
+        );
     };
 
     const handleSaveExpense = async () => {
@@ -585,35 +714,98 @@ export default function PlaceDetailScreen() {
                 {/* 구분선 */}
                 <View style={styles.divider} />
 
-                {/* 지출 섹션 */}
+                {/* 개인 지출 섹션 */}
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>지출</Text>
+                    <View style={styles.sectionHeader}>
+                        <Text style={styles.sectionTitle}>개인 지출</Text>
+                        {(place.expenses?.filter(expense => expense.type === 'PERSONAL').length ?? 0) > 0 && (
+                            <Text style={styles.totalAmount}>
+                                총 지출 {(place.expenses ?? [])
+                                    .filter(expense => expense.type === 'PERSONAL')
+                                    .reduce((sum, expense) => sum + expense.amount, 0)
+                                    .toLocaleString()}{getCurrencySymbol()}
+                            </Text>
+                        )}
+                    </View>
 
-                    {/* 저장된 지출 목록 */}
-                    {place.expenses && place.expenses.length > 0 && (
+                    {/* 저장된 개인 지출 목록 */}
+                    {(place.expenses?.filter(expense => expense.type === 'PERSONAL').length ?? 0) > 0 ? (
                         <View style={styles.expenseList}>
-                            {place.expenses.map((expense) => (
-                                <TouchableOpacity
-                                    key={expense.id}
-                                    style={styles.expenseItem}
-                                    onLongPress={() => handleDeleteExpense(expense.id)}
-                                    activeOpacity={0.7}
-                                >
-                                    <Text style={styles.expenseTypeText}>
-                                        {expense.type === 'personal' ? '개인' : '공동'}
-                                    </Text>
-                                    <Text style={styles.expenseAmountText}>
-                                        {expense.amount.toLocaleString()}{getCurrencySymbol()}
-                                    </Text>
-                                    <Text style={styles.expenseTitleText}>
-                                        {expense.title}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
+                            {(place.expenses ?? [])
+                                .filter(expense => expense.type === 'PERSONAL')
+                                .map((expense) => (
+                                    <TouchableOpacity
+                                        key={expense.id}
+                                        style={styles.expenseItem}
+                                        onPress={() => handleExpenseEdit(expense)}
+                                        onLongPress={() => handleExpenseDelete(expense.id)}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Text style={styles.expenseAmountText}>
+                                            {expense.amount.toLocaleString()}{getCurrencySymbol()}
+                                        </Text>
+                                        <Text style={styles.expenseTitleText} numberOfLines={1} ellipsizeMode="tail">
+                                            {expense.title}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
                         </View>
-                    )}
+                    ) : null}
 
-                    <TouchableOpacity style={styles.addButton} onPress={handleExpenseAdd}>
+                    <TouchableOpacity style={styles.addButton} onPress={() => handleExpenseAdd('PERSONAL')}>
+                        <Feather name="plus" size={12} color="#fff" />
+                        <Text style={styles.addButtonText}>지출 추가</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {/* 공용 지출 섹션 */}
+                <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                        <Text style={styles.sectionTitle}>공용 지출</Text>
+                        {(place.expenses?.filter(expense => expense.type === 'SHARED').length ?? 0) > 0 && (
+                            <Text style={styles.totalAmount}>
+                                총 지출 {(place.expenses ?? [])
+                                    .filter(expense => expense.type === 'SHARED')
+                                    .reduce((sum, expense) => sum + expense.amount, 0)
+                                    .toLocaleString()}{getCurrencySymbol()}
+                            </Text>
+                        )}
+                    </View>
+
+                    {/* 저장된 공용 지출 목록 */}
+                    {(place.expenses?.filter(expense => expense.type === 'SHARED').length ?? 0) > 0 ? (
+                        <View style={styles.expenseList}>
+                            {(place.expenses ?? [])
+                                .filter(expense => expense.type === 'SHARED')
+                                .map((expense) => (
+                                    <TouchableOpacity
+                                        key={expense.id}
+                                        style={styles.expenseItemContainer}
+                                        onPress={() => handleExpenseEdit(expense)}
+                                        onLongPress={() => handleExpenseDelete(expense.id)}
+                                        activeOpacity={0.7}
+                                    >
+                                        <View style={styles.expenseItem}>
+                                            <Text style={styles.expenseAmountText}>
+                                                {expense.amount.toLocaleString()}{getCurrencySymbol()}
+                                            </Text>
+                                            <View style={styles.expenseTitleContainer}>
+                                                <Text style={styles.expenseTitleText} numberOfLines={1} ellipsizeMode="tail">
+                                                    {expense.title}
+                                                </Text>
+                                                {expense.memo && (
+                                                    <Text style={styles.expenseMemoText} numberOfLines={1} ellipsizeMode="tail">
+                                                        {expense.memo}
+                                                    </Text>
+                                                )}
+                                            </View>
+                                        </View>
+                                    </TouchableOpacity>
+                                ))}
+                        </View>
+                    ) : null}
+
+                    <TouchableOpacity style={styles.addButton} onPress={() => handleExpenseAdd('SHARED')}>
                         <Feather name="plus" size={12} color="#fff" />
                         <Text style={styles.addButtonText}>지출 추가</Text>
                     </TouchableOpacity>
@@ -724,31 +916,26 @@ export default function PlaceDetailScreen() {
                 <TouchableOpacity
                     style={styles.modalOverlay}
                     activeOpacity={1}
-                    onPress={() => setShowExpenseModal(false)}
+                    onPress={() => {
+                        setShowExpenseModal(false);
+                        setShowPaidByDropdown(false);
+                    }}
                 >
                     <View style={styles.expenseModalContent} onStartShouldSetResponder={() => true}>
-                        <View style={styles.expenseTypeRow}>
+                        {/* 상단 헤더 (제목 + X 버튼) */}
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>
+                                {expenseType === 'PERSONAL' ? '개인' : '공용'} 지출 {editingExpenseId ? '수정' : '추가'}
+                            </Text>
                             <TouchableOpacity
-                                style={styles.expenseTypeButton}
-                                onPress={() => setExpenseType('personal')}
+                                style={styles.modalCloseButton}
+                                onPress={() => {
+                                    setShowExpenseModal(false);
+                                    setShowPaidByDropdown(false);
+                                    setEditingExpenseId(null);
+                                }}
                             >
-                                <MaterialIcons
-                                    name={expenseType === 'personal' ? "check-box" : "check-box-outline-blank"}
-                                    size={24}
-                                    color={expenseType === 'personal' ? "#088CDA" : "#C7C7C7"}
-                                />
-                                <Text style={styles.expenseTypeButtonText}>개인</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={styles.expenseTypeButton}
-                                onPress={() => setExpenseType('shared')}
-                            >
-                                <MaterialIcons
-                                    name={expenseType === 'shared' ? "check-box" : "check-box-outline-blank"}
-                                    size={24}
-                                    color={expenseType === 'shared' ? "#088CDA" : "#C7C7C7"}
-                                />
-                                <Text style={styles.expenseTypeButtonText}>공동</Text>
+                                <Feather name="x" size={24} color="#000" />
                             </TouchableOpacity>
                         </View>
 
@@ -756,7 +943,7 @@ export default function PlaceDetailScreen() {
                             <Text style={styles.inputLabel}>지출 제목</Text>
                             <TextInput
                                 style={styles.modalInput}
-                                placeholder="예: 신주큐 교엔 스타벅스 카페라떼"
+                                placeholder="예: 신주쿠 교엔 입장권"
                                 placeholderTextColor="#9E9E9E"
                                 value={expenseTitle}
                                 onChangeText={setExpenseTitle}
@@ -778,13 +965,74 @@ export default function PlaceDetailScreen() {
                             </View>
                         </View>
 
+                        {/* 공용 지출일 때만 지불한 사람 선택 */}
+                        {expenseType === 'SHARED' && (
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.inputLabel}>지불한 사람</Text>
+                                <TouchableOpacity
+                                    style={styles.dropdown}
+                                    onPress={() => setShowPaidByDropdown(!showPaidByDropdown)}
+                                >
+                                    <Text style={styles.dropdownText}>
+                                        {expensePaidBy
+                                            ? participants.find(p => p.id === expensePaidBy)?.name || '선택하세요'
+                                            : '선택하세요'}
+                                    </Text>
+                                    <Feather
+                                        name={showPaidByDropdown ? "chevron-up" : "chevron-down"}
+                                        size={20}
+                                        color="#585858"
+                                    />
+                                </TouchableOpacity>
+
+                                {showPaidByDropdown && (
+                                    <View style={styles.dropdownList}>
+                                        {participants.map((participant) => (
+                                            <TouchableOpacity
+                                                key={participant.id}
+                                                style={styles.dropdownItem}
+                                                onPress={() => {
+                                                    setExpensePaidBy(participant.id);
+                                                    setShowPaidByDropdown(false);
+                                                }}
+                                            >
+                                                <Text style={[
+                                                    styles.dropdownItemText,
+                                                    expensePaidBy === participant.id && styles.dropdownItemTextSelected
+                                                ]}>
+                                                    {participant.name}
+                                                </Text>
+                                                {expensePaidBy === participant.id && (
+                                                    <Feather name="check" size={16} color="#088CDA" />
+                                                )}
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+                                )}
+                            </View>
+                        )}
+
                         <View style={styles.modalButtons}>
-                            <TouchableOpacity onPress={() => setShowExpenseModal(false)}>
-                                <Text style={styles.modalCancelText}>취소</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity onPress={handleSaveExpense}>
-                                <Text style={styles.modalConfirmText}>확인</Text>
-                            </TouchableOpacity>
+                            {editingExpenseId ? (
+                                // 수정 모드: 삭제 + 확인
+                                <>
+                                    <TouchableOpacity onPress={() => {
+                                        setShowExpenseModal(false);
+                                        setShowPaidByDropdown(false);
+                                        handleExpenseDelete(editingExpenseId);
+                                    }}>
+                                        <Text style={styles.modalDeleteText}>삭제</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={handleExpenseSave}>
+                                        <Text style={styles.modalConfirmText}>확인</Text>
+                                    </TouchableOpacity>
+                                </>
+                            ) : (
+                                // 추가 모드: 확인만
+                                <TouchableOpacity onPress={handleExpenseSave} style={{ marginLeft: 'auto' }}>
+                                    <Text style={styles.modalConfirmText}>확인</Text>
+                                </TouchableOpacity>
+                            )}
                         </View>
                     </View>
                 </TouchableOpacity>
@@ -1022,6 +1270,7 @@ const styles = StyleSheet.create({
         color: '#fff',
     },
     photoSection: {
+        marginTop: 12,
         marginBottom: 24,
     },
     photoSectionContent: {
@@ -1093,13 +1342,25 @@ const styles = StyleSheet.create({
     section: {
         marginBottom: 24,
     },
+    sectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 12,
+    },
     sectionTitle: {
         fontSize: 16,
         fontWeight: '700',
         lineHeight: 24,
         letterSpacing: -0.2,
         color: '#000',
-        marginBottom: 8,
+    },
+    totalAmount: {
+        fontSize: 14,
+        fontWeight: '400',
+        lineHeight: 20,
+        letterSpacing: -0.2,
+        color: '#666',
     },
     modalOverlay: {
         flex: 1,
@@ -1132,14 +1393,21 @@ const styles = StyleSheet.create({
         marginTop: 'auto',
         marginBottom: 'auto',
     },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 24,
+    },
     modalTitle: {
         fontSize: 16,
         fontWeight: '600',
         lineHeight: 24,
         letterSpacing: -0.2,
         color: '#000',
-        marginBottom: 16,
-        textAlign: 'center',
+    },
+    modalCloseButton: {
+        padding: 4,
     },
     timeInput: {
         borderBottomWidth: 1,
@@ -1164,11 +1432,19 @@ const styles = StyleSheet.create({
         color: '#585858',
         fontWeight: '600',
     },
+    modalDeleteText: {
+        fontSize: 16,
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#FF3B30',
+        fontWeight: '600',
+    },
     modalConfirmText: {
         fontSize: 16,
         lineHeight: 24,
         letterSpacing: -0.2,
-        color: '#000',
+        color: '#088CDA',
+        fontWeight: '600',
     },
     expenseModalContent: {
         backgroundColor: '#fff',
@@ -1214,6 +1490,51 @@ const styles = StyleSheet.create({
         letterSpacing: -0.2,
         color: '#000',
     },
+    memoInput: {
+        minHeight: 80,
+        paddingTop: 12,
+    },
+    dropdown: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        borderBottomWidth: 1,
+        borderBottomColor: '#E0E0E0',
+        paddingVertical: 12,
+    },
+    dropdownText: {
+        fontSize: 16,
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#000',
+    },
+    dropdownList: {
+        marginTop: 8,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#E0E0E0',
+        backgroundColor: '#fff',
+        overflow: 'hidden',
+    },
+    dropdownItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F0F0F0',
+    },
+    dropdownItemText: {
+        fontSize: 16,
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#000',
+    },
+    dropdownItemTextSelected: {
+        color: '#088CDA',
+        fontWeight: '600',
+    },
     memoModalContent: {
         backgroundColor: '#fff',
         borderRadius: 16,
@@ -1245,21 +1566,16 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
     expenseList: {
-        marginBottom: 8,
-        gap: 4,
+        marginBottom: 12,
+        gap: 8,
+    },
+    expenseItemContainer: {
+        marginBottom: 4,
     },
     expenseItem: {
         flexDirection: 'row',
-        alignItems: 'baseline',
-        paddingVertical: 2,
-    },
-    expenseTypeText: {
-        fontSize: 16,
-        fontWeight: '700',
-        lineHeight: 24,
-        letterSpacing: -0.2,
-        color: '#088CDA',
-        width: 50,
+        alignItems: 'flex-start',
+        gap: 12,
     },
     expenseAmountText: {
         fontSize: 16,
@@ -1267,9 +1583,10 @@ const styles = StyleSheet.create({
         lineHeight: 24,
         letterSpacing: -0.2,
         color: '#000',
-        width: 100,
-        textAlign: 'left',
-        marginRight: 12,
+        minWidth: 80,
+    },
+    expenseTitleContainer: {
+        flex: 1,
     },
     expenseTitleText: {
         fontSize: 16,
@@ -1277,7 +1594,14 @@ const styles = StyleSheet.create({
         lineHeight: 24,
         letterSpacing: -0.2,
         color: '#000',
-        flex: 1,
+    },
+    expenseMemoText: {
+        fontSize: 14,
+        fontWeight: '400',
+        lineHeight: 20,
+        letterSpacing: -0.2,
+        color: '#666',
+        marginTop: 2,
     },
     amountInputContainer: {
         flexDirection: 'row',

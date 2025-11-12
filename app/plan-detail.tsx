@@ -142,7 +142,7 @@ const GOOGLE_MAPS_API_KEY = Platform.select({
 
 export default function PlanDetailScreen() {
     const { planId } = useLocalSearchParams<{ planId: string }>();
-    const { getTravelPlan, reorderPlaces, getFlightsByPlan, getAccommodationsByPlan, getPlacesByDay } = useUser();
+    const { getTravelPlan, reorderPlaces, getFlightsByPlan, getAccommodationsByPlan, getPlacesByDay, getExpensesByPlace } = useUser();
     const [selectedDay, setSelectedDay] = useState(1);
     const [isEditMode, setIsEditMode] = useState(false);
     const [isLoadingPlaces, setIsLoadingPlaces] = useState(false);
@@ -247,6 +247,19 @@ export default function PlanDetailScreen() {
 
         try {
             await getPlacesByDay(planId, selectedDay);
+
+            // 각 place의 expenses 로드
+            const currentDayData = getTravelPlan(planId)?.days.find(day => day.dayNumber === selectedDay);
+            if (currentDayData?.places) {
+                await Promise.all(
+                    currentDayData.places.map(place =>
+                        getExpensesByPlace(place.id).catch(err => {
+                            console.error(`Failed to load expenses for place ${place.id}:`, err);
+                            return [];
+                        })
+                    )
+                );
+            }
         } catch (error) {
             console.error('Failed to load places:', error);
         } finally {

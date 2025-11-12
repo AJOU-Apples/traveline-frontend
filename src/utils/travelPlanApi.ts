@@ -109,10 +109,65 @@ export interface ReorderPhotosRequest {
 
 export interface ExpenseDto {
     id: number;
+    travelPlanId: number;
+    travelDayId?: number;
+    dayNumber?: number;
+    placeId?: number;
+    // 결제 정보
+    paidById: number;
+    paidByName: string;
+    // 지출 정보
+    title: string;
+    amount: number; // 백엔드는 BigDecimal, 프론트는 number
+    currency: string;
+    // 지출 타입
+    type: 'PERSONAL' | 'SHARED';
+    // 정산 정보
+    splitWith?: number[];
+    splitAmount?: number;
+    isSettled: boolean;
+    // 영수증
+    receiptImage?: string;
+    // 메모
+    memo?: string;
+    // 날짜 및 시간
+    expenseDate?: string; // YYYY-MM-DD
+    expenseTime?: string; // HH:mm
+    // 타임스탬프
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface CreateExpenseRequest {
+    travelPlanId: number;
+    dayNumber?: number;
+    placeId?: number;
     title: string;
     amount: number;
+    currency?: string; // default: KRW
     type: 'PERSONAL' | 'SHARED';
-    timestamp: number;
+    splitWith?: number[]; // SHARED인 경우 정산할 사람들
+    memo?: string;
+    expenseDate?: string; // YYYY-MM-DD
+    expenseTime?: string; // HH:mm
+}
+
+export interface UpdateExpenseRequest {
+    title?: string;
+    amount?: number;
+    type?: 'PERSONAL' | 'SHARED';
+    splitWith?: number[];
+    isSettled?: boolean;
+    memo?: string;
+    expenseDate?: string;
+    expenseTime?: string;
+}
+
+export interface ExpenseSummaryDto {
+    totalAmount: number;      // 전체 지출 총액
+    totalPersonal: number;    // 개인 지출 총액
+    totalShared: number;      // 공동 지출 총액
+    expenseCount: number;     // 지출 건수
 }
 
 export interface PlaceSearchResult {
@@ -773,24 +828,183 @@ class TravelPlanApi {
         }
     }
 
-    // ============ 지출 관리 (TODO: 백엔드 구현 후 활성화) ============
+    // ============ 지출 관리 ============
 
-    // // 지출 추가
-    // async addExpense(
-    //     planId: number,
-    //     dayNumber: number,
-    //     placeId: number,
-    //     data: AddExpenseRequest
-    // ): Promise<ExpenseDto> {
-    //     // TODO: 백엔드에 Expense Entity 구현 후 활성화
-    //     throw new Error('Expense feature is not implemented in backend yet');
-    // }
+    // 지출 추가
+    async createExpense(request: CreateExpenseRequest): Promise<ExpenseDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/expenses`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify(request),
+                }
+            );
 
-    // // 지출 삭제
-    // async deleteExpense(planId: number, dayNumber: number, placeId: number, expenseId: number): Promise<void> {
-    //     // TODO: 백엔드에 Expense Entity 구현 후 활성화
-    //     throw new Error('Expense feature is not implemented in backend yet');
-    // }
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '지출 추가에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Create expense error:', error);
+            throw error;
+        }
+    }
+
+    // 특정 장소의 지출 조회
+    async getExpensesByPlace(placeId: number): Promise<ExpenseDto[]> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/expenses?placeId=${placeId}`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('지출 조회에 실패했습니다.');
+            }
+
+            const data = await response.json();
+            return data.expenses || [];
+        } catch (error) {
+            console.error('Get expenses by place error:', error);
+            throw error;
+        }
+    }
+
+    // 특정 날짜의 지출 조회
+    async getExpensesByDay(travelPlanId: number, dayNumber: number): Promise<ExpenseDto[]> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/expenses?travelPlanId=${travelPlanId}&dayNumber=${dayNumber}`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('지출 조회에 실패했습니다.');
+            }
+
+            const data = await response.json();
+            return data.expenses || [];
+        } catch (error) {
+            console.error('Get expenses by day error:', error);
+            throw error;
+        }
+    }
+
+    // 여행 계획의 지출 조회 (타입 필터 옵션)
+    async getExpensesByTravelPlan(
+        travelPlanId: number,
+        type?: 'PERSONAL' | 'SHARED'
+    ): Promise<{ expenses: ExpenseDto[]; summary: ExpenseSummaryDto }> {
+        try {
+            const typeParam = type ? `&type=${type}` : '';
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/expenses?travelPlanId=${travelPlanId}${typeParam}`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('지출 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get expenses by travel plan error:', error);
+            throw error;
+        }
+    }
+
+    // 지출 상세 조회
+    async getExpense(expenseId: number): Promise<ExpenseDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/expenses/${expenseId}`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('지출 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get expense error:', error);
+            throw error;
+        }
+    }
+
+    // 지출 수정
+    async updateExpense(expenseId: number, request: UpdateExpenseRequest): Promise<ExpenseDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/expenses/${expenseId}`,
+                {
+                    method: 'PUT',
+                    body: JSON.stringify(request),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '지출 수정에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Update expense error:', error);
+            throw error;
+        }
+    }
+
+    // 지출 삭제
+    async deleteExpense(expenseId: number): Promise<void> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/expenses/${expenseId}`,
+                {
+                    method: 'DELETE',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('지출 삭제에 실패했습니다.');
+            }
+        } catch (error) {
+            console.error('Delete expense error:', error);
+            throw error;
+        }
+    }
+
+    // 지출 통계 조회
+    async getExpenseSummary(travelPlanId: number): Promise<ExpenseSummaryDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/expenses/summary?travelPlanId=${travelPlanId}`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('지출 통계 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get expense summary error:', error);
+            throw error;
+        }
+    }
 }
 
 export const travelPlanApi = new TravelPlanApi();
