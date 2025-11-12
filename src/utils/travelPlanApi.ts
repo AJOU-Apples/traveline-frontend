@@ -138,6 +138,23 @@ export interface ExpenseDto {
     updatedAt: string;
 }
 
+export interface AuthorDto {
+    id: number;
+    email: string;
+    name: string;
+    username: string;
+    profileImageUrl?: string;
+}
+
+export interface MemoDto {
+    id: number;
+    placeId: number;
+    author: AuthorDto;
+    content: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
 export interface CreateExpenseRequest {
     travelPlanId: number;
     dayNumber?: number;
@@ -161,6 +178,15 @@ export interface UpdateExpenseRequest {
     memo?: string;
     expenseDate?: string;
     expenseTime?: string;
+}
+
+export interface CreateMemoRequest {
+    placeId: number;
+    content: string;
+}
+
+export interface UpdateMemoRequest {
+    content: string;
 }
 
 export interface ExpenseSummaryDto {
@@ -1002,6 +1028,115 @@ class TravelPlanApi {
             return response.json();
         } catch (error) {
             console.error('Get expense summary error:', error);
+            throw error;
+        }
+    }
+
+    // ============ Memo API ============
+
+    // 메모 생성
+    async createMemo(request: CreateMemoRequest): Promise<MemoDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/memos`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify(request),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '메모 추가에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Create memo error:', error);
+            throw error;
+        }
+    }
+
+    // 장소별 메모 목록 조회
+    async getMemosByPlace(placeId: number): Promise<MemoDto[]> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/memos/place/${placeId}`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('메모 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get memos error:', error);
+            throw error;
+        }
+    }
+
+    // 메모 상세 조회
+    async getMemo(memoId: number): Promise<MemoDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/memos/${memoId}`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('메모 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get memo error:', error);
+            throw error;
+        }
+    }
+
+    // 메모 수정
+    async updateMemo(memoId: number, request: UpdateMemoRequest): Promise<MemoDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/memos/${memoId}`,
+                {
+                    method: 'PUT',
+                    body: JSON.stringify(request),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '메모 수정에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Update memo error:', error);
+            throw error;
+        }
+    }
+
+    // 메모 삭제
+    async deleteMemo(memoId: number): Promise<void> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/memos/${memoId}`,
+                {
+                    method: 'DELETE',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('메모 삭제에 실패했습니다.');
+            }
+        } catch (error) {
+            console.error('Delete memo error:', error);
             throw error;
         }
     }

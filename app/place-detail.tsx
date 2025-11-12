@@ -3,7 +3,7 @@ import { View, StyleSheet, TouchableOpacity, ScrollView, Platform, Image, Modal,
 import { Text } from 'react-native-paper';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
-import { useUser, Expense } from '../src/context/UserContext';
+import { useUser, Expense, Memo } from '../src/context/UserContext';
 import LocationBasedImagePicker from '../components/LocationBasedImagePicker';
 import { getFullImageUrl } from '../src/utils/travelPlanApi';
 
@@ -16,7 +16,7 @@ export default function PlaceDetailScreen() {
         placeId: string;
     }>();
 
-    const { username, authUser, getTravelPlan, uploadPhotoToPlace, getPhotosByPlace, deletePhoto, reorderPhotos, updatePlaceMemo, deletePlaceFromDay, createExpense, getExpensesByPlace, updateExpense, deleteExpense } = useUser();
+    const { username, authUser, getTravelPlan, uploadPhotoToPlace, getPhotosByPlace, deletePhoto, reorderPhotos, updatePlaceMemo, deletePlaceFromDay, createExpense, getExpensesByPlace, updateExpense, deleteExpense, createMemo, getMemosByPlace, updateMemo, deleteMemo } = useUser();
     const [showTimeModal, setShowTimeModal] = useState(false);
     const [showExpenseModal, setShowExpenseModal] = useState(false);
     const [showMemoModal, setShowMemoModal] = useState(false);
@@ -26,6 +26,7 @@ export default function PlaceDetailScreen() {
     const [selectedImageUri, setSelectedImageUri] = useState<string>('');
     const [isLoadingPhotos, setIsLoadingPhotos] = useState(false);
     const [isLoadingExpenses, setIsLoadingExpenses] = useState(false);
+    const [isLoadingMemos, setIsLoadingMemos] = useState(false);
     const [selectedTime, setSelectedTime] = useState('');
     const [expenseType, setExpenseType] = useState<'PERSONAL' | 'SHARED'>('PERSONAL');
     const [expenseTitle, setExpenseTitle] = useState('');
@@ -35,12 +36,14 @@ export default function PlaceDetailScreen() {
     const [showPaidByDropdown, setShowPaidByDropdown] = useState(false);
     const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
     const [memoText, setMemoText] = useState('');
+    const [editingMemoId, setEditingMemoId] = useState<string | null>(null);
     const [failedImageIds, setFailedImageIds] = useState<Set<string>>(new Set());
     const [selectedVisibility, setSelectedVisibility] = useState<'PERSONAL' | 'SHARED'>('SHARED');
 
     // 중복 로딩 방지를 위한 ref
     const isLoadingRef = useRef(false);
     const isLoadingExpensesRef = useRef(false);
+    const isLoadingMemosRef = useRef(false);
 
     // 여행 데이터 및 장소 정보 가져오기
     const tripData = getTravelPlan(planId || '');
@@ -107,11 +110,32 @@ export default function PlaceDetailScreen() {
         }
     };
 
-    // 화면 포커스될 때 사진 및 지출 로드 (1회만)
+    // 메모 로드 함수
+    const loadMemos = async () => {
+        if (!placeId || isLoadingMemosRef.current) return;
+
+        console.log('📝 [loadMemos] Starting to load memos for placeId:', placeId);
+        isLoadingMemosRef.current = true;
+        setIsLoadingMemos(true);
+
+        try {
+            const memos = await getMemosByPlace(placeId);
+            console.log('📝 [loadMemos] Loaded memos:', memos?.length || 0, 'memos');
+        } catch (error) {
+            console.error('❌ [loadMemos] Failed to load memos:', error);
+            Alert.alert('오류', '메모를 불러오는 중 오류가 발생했습니다.');
+        } finally {
+            setIsLoadingMemos(false);
+            isLoadingMemosRef.current = false;
+        }
+    };
+
+    // 화면 포커스될 때 사진, 지출, 메모 로드 (1회만)
     useFocusEffect(
         useCallback(() => {
             loadPhotos();
             loadExpenses();
+            loadMemos();
             // eslint-disable-next-line react-hooks/exhaustive-deps
         }, [placeId]) // placeId가 변경될 때만 실행
     );
@@ -357,6 +381,72 @@ export default function PlaceDetailScreen() {
         );
     };
 
+    // 메모 추가/수정 모드 설정
+    const handleMemoEdit = (memo: Memo) => {
+        setMemoText(memo.content);
+        setEditingMemoId(memo.id);
+        setShowMemoModal(true);
+    };
+
+    // 메모 저장 핸들러 (생성 및 수정)
+    const handleMemoSave = async () => {
+        if (!memoText.trim()) {
+            Alert.alert('알림', '메모 내용을 입력해주세요.');
+            return;
+        }
+
+        try {
+            if (editingMemoId) {
+                // 수정 모드
+                await updateMemo(editingMemoId, memoText.trim());
+                setMemoText('');
+                setEditingMemoId(null);
+                setShowMemoModal(false);
+                await loadMemos();
+                Alert.alert('완료', '메모가 수정되었습니다.');
+            } else {
+                // 생성 모드
+                await createMemo(placeId || '', memoText.trim());
+                setMemoText('');
+                setShowMemoModal(false);
+                await loadMemos();
+                Alert.alert('완료', '메모가 저장되었습니다.');
+            }
+        } catch (error) {
+            console.error('Failed to save memo:', error);
+            Alert.alert('오류', editingMemoId ? '메모 수정 중 오류가 발생했습니다.' : '메모 저장 중 오류가 발생했습니다.');
+        }
+    };
+
+    // 메모 삭제 핸들러
+    const handleMemoDelete = (memoId: string) => {
+        setShowMemoModal(false); // 모달이 열려있으면 닫기
+        Alert.alert(
+            '메모 삭제',
+            '이 메모를 삭제하시겠습니까?',
+            [
+                {
+                    text: '취소',
+                    style: 'cancel',
+                },
+                {
+                    text: '삭제',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await deleteMemo(memoId);
+                            await loadMemos();
+                            Alert.alert('완료', '메모가 삭제되었습니다.');
+                        } catch (error) {
+                            console.error('Failed to delete memo:', error);
+                            Alert.alert('오류', '메모 삭제 중 오류가 발생했습니다.');
+                        }
+                    },
+                },
+            ]
+        );
+    };
+
     const handleSaveExpense = async () => {
         // TODO: 백엔드에 Expense Entity 구현 후 활성화
         Alert.alert('준비 중', '지출 기능은 현재 개발 중입니다.');
@@ -418,33 +508,9 @@ export default function PlaceDetailScreen() {
     };
 
     const handleMemoAdd = () => {
-        setMemoText(place?.memo || '');
+        setMemoText('');
+        setEditingMemoId(null);
         setShowMemoModal(true);
-    };
-
-    const handleSaveMemo = async () => {
-        if (planId && placeId) {
-            try {
-                await updatePlaceMemo(planId, parseInt(dayNumber || '1'), placeId, memoText);
-                setShowMemoModal(false);
-            } catch (error) {
-                console.error('Failed to save memo:', error);
-                Alert.alert('오류', '메모 저장 중 오류가 발생했습니다.');
-            }
-        }
-    };
-
-    const handleDeleteMemo = async () => {
-        if (planId && placeId) {
-            try {
-                await updatePlaceMemo(planId, parseInt(dayNumber || '1'), placeId, '');
-                setMemoText('');
-                setShowMemoModal(false);
-            } catch (error) {
-                console.error('Failed to delete memo:', error);
-                Alert.alert('오류', '메모 삭제 중 오류가 발생했습니다.');
-            }
-        }
     };
 
     const handleDeletePlace = () => {
@@ -818,24 +884,29 @@ export default function PlaceDetailScreen() {
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>메모</Text>
 
-                    {/* 저장된 메모 표시 */}
-                    {place.memo && place.memo.trim() !== '' && (
-                        <TouchableOpacity
-                            style={styles.memoItemContainer}
-                            onPress={handleMemoAdd}
-                            activeOpacity={0.7}
-                        >
-                            <View style={styles.memoUserInfo}>
-                                <MaterialIcons name="account-circle" size={24} color="#C7C7C7" />
-                                <Text style={styles.memoUserName}>{username}</Text>
-                            </View>
-                            <Text style={styles.memoContentText} numberOfLines={1} ellipsizeMode="tail">
-                                {place.memo}
-                            </Text>
-                        </TouchableOpacity>
+                    {/* 저장된 메모 목록 */}
+                    {(place.memos && place.memos.length > 0) && (
+                        <View style={styles.memoList}>
+                            {place.memos.map((memo) => (
+                                <TouchableOpacity
+                                    key={memo.id}
+                                    style={styles.memoItemContainer}
+                                    onPress={() => handleMemoEdit(memo)}
+                                    activeOpacity={0.7}
+                                >
+                                    <MaterialIcons name="account-circle" size={24} color="#C7C7C7" />
+                                    <View style={styles.memoContentContainer}>
+                                        <Text style={styles.memoUserName}>{memo.author.username}</Text>
+                                        <Text style={styles.memoContentText} numberOfLines={1} ellipsizeMode="tail">
+                                            {memo.content}
+                                        </Text>
+                                    </View>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
                     )}
 
-                    {/* 메모 추가/편집 버튼 */}
+                    {/* 메모 추가 버튼 */}
                     <TouchableOpacity style={styles.addButton} onPress={handleMemoAdd}>
                         <Feather name="plus" size={12} color="#fff" />
                         <Text style={styles.addButtonText}>메모 추가</Text>
@@ -1043,12 +1114,18 @@ export default function PlaceDetailScreen() {
                 visible={showMemoModal}
                 transparent
                 animationType="fade"
-                onRequestClose={() => setShowMemoModal(false)}
+                onRequestClose={() => {
+                    setShowMemoModal(false);
+                    setEditingMemoId(null);
+                }}
             >
                 <TouchableOpacity
                     style={styles.modalOverlay}
                     activeOpacity={1}
-                    onPress={() => setShowMemoModal(false)}
+                    onPress={() => {
+                        setShowMemoModal(false);
+                        setEditingMemoId(null);
+                    }}
                 >
                     <View style={styles.memoModalContent} onStartShouldSetResponder={() => true}>
                         <View style={styles.memoInputContainer}>
@@ -1063,10 +1140,14 @@ export default function PlaceDetailScreen() {
                             />
                         </View>
                         <View style={styles.modalButtons}>
-                            <TouchableOpacity onPress={handleDeleteMemo}>
-                                <Text style={styles.modalCancelText}>삭제하기</Text>
+                            <TouchableOpacity onPress={() => {
+                                setShowMemoModal(false);
+                                setEditingMemoId(null);
+                                setMemoText('');
+                            }}>
+                                <Text style={styles.modalCancelText}>취소</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity onPress={handleSaveMemo}>
+                            <TouchableOpacity onPress={handleMemoSave}>
                                 <Text style={styles.memoConfirmText}>확인</Text>
                             </TouchableOpacity>
                         </View>
@@ -1261,6 +1342,7 @@ const styles = StyleSheet.create({
         paddingVertical: 4,
         height: 24,
         alignSelf: 'flex-start',
+        marginTop: 8,
     },
     addButtonText: {
         fontSize: 12,
@@ -1626,31 +1708,39 @@ const styles = StyleSheet.create({
         color: '#585858',
         marginLeft: 8,
     },
+    memoList: {
+        gap: 8,
+        marginTop: 16,
+        marginBottom: 16,
+    },
     memoItemContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 16,
-        marginBottom: 8,
+        gap: 12,
+        paddingVertical: 4,
     },
-    memoUserInfo: {
+    memoContentContainer: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
-        width: 110,
+        gap: 8,
+        overflow: 'hidden',
     },
     memoUserName: {
         fontSize: 14,
         lineHeight: 20,
         letterSpacing: -0.175,
         color: '#000',
-        fontWeight: '500',
+        fontWeight: '700',
+        flexShrink: 0,
+        minWidth: 48,
     },
     memoContentText: {
         flex: 1,
         fontSize: 14,
         lineHeight: 20,
         letterSpacing: -0.175,
-        color: '#000',
+        color: '#585858',
     },
     imageModalContainer: {
         flex: 1,

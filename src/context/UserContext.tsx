@@ -76,6 +76,23 @@ export type Expense = {
   updatedAt: string;
 };
 
+export type Author = {
+  id: string;
+  email: string;
+  name: string;
+  username: string;
+  profileImageUrl?: string;
+};
+
+export type Memo = {
+  id: string;
+  placeId: string;
+  author: Author;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Place = {
   id: string;
   travelPlanId?: string;
@@ -94,6 +111,7 @@ export type Place = {
   visitedAt?: string;
   photos?: Photo[];
   expenses?: Expense[];
+  memos?: Memo[];
 };
 
 export type TravelDay = {
@@ -277,6 +295,11 @@ type UserContextValue = {
     expenseTime?: string;
   }) => Promise<Expense>;
   deleteExpense: (expenseId: string) => Promise<void>;
+  // Memo methods (new)
+  createMemo: (placeId: string, content: string) => Promise<Memo>;
+  getMemosByPlace: (placeId: string) => Promise<Memo[]>;
+  updateMemo: (memoId: string, content: string) => Promise<Memo>;
+  deleteMemo: (memoId: string) => Promise<void>;
   // Flight methods
   getFlightsByPlan: (planId: string) => Flight[];
   addFlight: (flight: Omit<Flight, 'id'>) => string;
@@ -1229,6 +1252,181 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     }
   };
 
+  // Memo methods
+  const createMemo = async (placeId: string, content: string): Promise<Memo> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const createdMemo = await travelPlanApi.createMemo({
+        placeId: parseInt(placeId),
+        content: content,
+      });
+
+      const newMemo: Memo = {
+        id: createdMemo.id.toString(),
+        placeId: createdMemo.placeId.toString(),
+        author: {
+          id: createdMemo.author.id.toString(),
+          email: createdMemo.author.email,
+          name: createdMemo.author.name,
+          username: createdMemo.author.username,
+          profileImageUrl: createdMemo.author.profileImageUrl,
+        },
+        content: createdMemo.content,
+        createdAt: createdMemo.createdAt,
+        updatedAt: createdMemo.updatedAt,
+      };
+
+      // 상태 업데이트
+      setTravelPlans((prev) =>
+        prev.map((plan) => ({
+          ...plan,
+          days: plan.days.map((day) => ({
+            ...day,
+            places: day.places.map((place) => {
+              if (place.id === placeId) {
+                return {
+                  ...place,
+                  memos: [...(place.memos || []), newMemo],
+                };
+              }
+              return place;
+            }),
+          })),
+        }))
+      );
+
+      return newMemo;
+    } catch (error) {
+      console.error('Failed to create memo:', error);
+      throw error;
+    }
+  };
+
+  const getMemosByPlace = async (placeId: string): Promise<Memo[]> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const memos = await travelPlanApi.getMemosByPlace(parseInt(placeId));
+
+      const convertedMemos = memos.map((memo) => ({
+        id: memo.id.toString(),
+        placeId: memo.placeId.toString(),
+        author: {
+          id: memo.author.id.toString(),
+          email: memo.author.email,
+          name: memo.author.name,
+          username: memo.author.username,
+          profileImageUrl: memo.author.profileImageUrl,
+        },
+        content: memo.content,
+        createdAt: memo.createdAt,
+        updatedAt: memo.updatedAt,
+      }));
+
+      // 상태 업데이트
+      setTravelPlans((prev) =>
+        prev.map((plan) => ({
+          ...plan,
+          days: plan.days.map((day) => ({
+            ...day,
+            places: day.places.map((place) => {
+              if (place.id === placeId) {
+                return {
+                  ...place,
+                  memos: convertedMemos,
+                };
+              }
+              return place;
+            }),
+          })),
+        }))
+      );
+
+      return convertedMemos;
+    } catch (error) {
+      console.error('Failed to get memos:', error);
+      throw error;
+    }
+  };
+
+  const updateMemo = async (memoId: string, content: string): Promise<Memo> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const updatedMemo = await travelPlanApi.updateMemo(parseInt(memoId), {
+        content: content,
+      });
+
+      const memo: Memo = {
+        id: updatedMemo.id.toString(),
+        placeId: updatedMemo.placeId.toString(),
+        author: {
+          id: updatedMemo.author.id.toString(),
+          email: updatedMemo.author.email,
+          name: updatedMemo.author.name,
+          username: updatedMemo.author.username,
+          profileImageUrl: updatedMemo.author.profileImageUrl,
+        },
+        content: updatedMemo.content,
+        createdAt: updatedMemo.createdAt,
+        updatedAt: updatedMemo.updatedAt,
+      };
+
+      // 상태 업데이트
+      setTravelPlans((prev) =>
+        prev.map((plan) => ({
+          ...plan,
+          days: plan.days.map((day) => ({
+            ...day,
+            places: day.places.map((place) => ({
+              ...place,
+              memos: place.memos?.map((m) => (m.id === memoId ? memo : m)),
+            })),
+          })),
+        }))
+      );
+
+      return memo;
+    } catch (error) {
+      console.error('Failed to update memo:', error);
+      throw error;
+    }
+  };
+
+  const deleteMemo = async (memoId: string): Promise<void> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      await travelPlanApi.deleteMemo(parseInt(memoId));
+
+      // 상태 업데이트
+      setTravelPlans((prev) =>
+        prev.map((plan) => ({
+          ...plan,
+          days: plan.days.map((day) => ({
+            ...day,
+            places: day.places.map((place) => ({
+              ...place,
+              memos: place.memos?.filter((m) => m.id !== memoId),
+            })),
+          })),
+        }))
+      );
+    } catch (error) {
+      console.error('Failed to delete memo:', error);
+      throw error;
+    }
+  };
+
   // Flight methods
   const getFlightsByPlan = (planId: string) => {
     return flights.filter((flight) => flight.travelPlanId === planId);
@@ -1323,6 +1521,10 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     getExpensesByPlace,
     updateExpense,
     deleteExpense,
+    createMemo,
+    getMemosByPlace,
+    updateMemo,
+    deleteMemo,
     getFlightsByPlan,
     addFlight,
     updateFlight,
