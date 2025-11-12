@@ -23,13 +23,26 @@ interface PhotoWithDistance {
     hasLocation: boolean;
 }
 
+export interface ExistingPhotoInfo {
+    id: string; // Photo ID (백엔드 DB ID)
+    filename: string; // 원본 파일명
+    orderIndex?: number; // 기존 순서
+}
+
 interface LocationBasedImagePickerProps {
     visible: boolean;
     onClose: () => void;
-    onSelectPhotos: (photoUris: string[]) => void;
+    onSelectPhotos: (
+        photoUris: string[], 
+        visibility: 'PERSONAL' | 'SHARED',
+        orderedExistingPhotoIds: string[] // 기존 사진들의 새로운 순서
+    ) => void;
     placeLatitude?: number;
     placeLongitude?: number;
     placeName: string;
+    initialVisibility?: 'PERSONAL' | 'SHARED'; // 초기 visibility 설정
+    hideVisibilitySelector?: boolean; // visibility 선택 UI 숨기기
+    existingPhotos?: ExistingPhotoInfo[]; // 이미 업로드된 사진 정보 (id + filename + orderIndex)
 }
 
 export default function LocationBasedImagePicker({
@@ -39,9 +52,16 @@ export default function LocationBasedImagePicker({
     placeLatitude,
     placeLongitude,
     placeName,
+    initialVisibility = 'SHARED', // 기본값은 SHARED
+    hideVisibilitySelector = false,
+    existingPhotos = [],
 }: LocationBasedImagePickerProps) {
     const [photos, setPhotos] = useState<PhotoWithDistance[]>([]);
     const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set());
+    const [selectedPhotoOrder, setSelectedPhotoOrder] = useState<string[]>([]); // 선택 순서 저장 (asset ID)
+    const [initialSelectedPhotoIds, setInitialSelectedPhotoIds] = useState<Set<string>>(new Set()); // 초기에 선택된 사진 ID (이미 업로드된 사진)
+    const [assetIdToPhotoIdMap, setAssetIdToPhotoIdMap] = useState<Map<string, string>>(new Map()); // asset ID → Photo ID 매핑
+    const [selectedVisibility, setSelectedVisibility] = useState<'SHARED' | 'PERSONAL'>('SHARED');
     const [loading, setLoading] = useState(false);
     const [hasPermission, setHasPermission] = useState(false);
     const [permissionDenied, setPermissionDenied] = useState(false);
@@ -50,9 +70,13 @@ export default function LocationBasedImagePicker({
     useEffect(() => {
         if (visible) {
             requestPermissionAndLoadPhotos();
-            setSelectedPhotos(new Set()); // 모달이 열릴 때마다 선택 초기화
+            setSelectedPhotos(new Set()); // 초기화
+            setSelectedPhotoOrder([]); // 초기화
+            setInitialSelectedPhotoIds(new Set()); // 초기화
+            setAssetIdToPhotoIdMap(new Map()); // 초기화
+            setSelectedVisibility(initialVisibility); // 초기 visibility 설정
         }
-    }, [visible]);
+    }, [visible, initialVisibility]);
 
     const requestPermissionAndLoadPhotos = async () => {
         try {
@@ -206,6 +230,64 @@ export default function LocationBasedImagePicker({
             // hasPhotosNearby가 false면 원래 순서(최신 순) 유지
 
             setPhotos(photosWithDistance);
+
+            // 기존 사진 자동 선택 (filename 매칭, orderIndex 순서 반영)
+            if (existingPhotos.length > 0) {
+                const preselectedSet = new Set<string>();
+                const assetToPhotoMap = new Map<string, string>(); // asset ID → Photo ID
+                
+                // filename → { assetId, photoId, orderIndex } 매핑
+                const matchedPhotos: Array<{ assetId: string; photoId: string; orderIndex: number }> = [];
+                
+                console.log('🔍 [LocationBasedImagePicker] Existing photos count:', existingPhotos.length);
+                console.log('🔍 [LocationBasedImagePicker] Existing photos:', existingPhotos);
+                
+                // filename 기반 매칭
+                photosWithDistance.forEach((photo) => {
+                    try {
+                        const assetFilename = photo.asset.filename;
+                        
+                        console.log('🔍 [Asset info]', {
+                            filename: assetFilename,
+                        });
+                        
+                        // filename으로 매칭 및 orderIndex, photoId 가져오기
+                        const matchedExisting = existingPhotos.find((existing) => {
+                            return existing.filename === assetFilename;
+                        });
+                        
+                        if (matchedExisting) {
+                            console.log('✅ [LocationBasedImagePicker] Match found:', {
+                                filename: assetFilename,
+                                photoId: matchedExisting.id,
+                                orderIndex: matchedExisting.orderIndex
+                            });
+                            
+                            matchedPhotos.push({
+                                assetId: photo.asset.id,
+                                photoId: matchedExisting.id, // 백엔드 Photo ID
+                                orderIndex: matchedExisting.orderIndex ?? 999999 // orderIndex가 없으면 맨 뒤로
+                            });
+                            preselectedSet.add(photo.asset.id);
+                            assetToPhotoMap.set(photo.asset.id, matchedExisting.id); // 매핑 저장
+                        }
+                    } catch (error) {
+                        console.error('Asset info 확인 실패:', photo.asset.id, error);
+                    }
+                });
+                
+                // orderIndex 순서대로 정렬
+                matchedPhotos.sort((a, b) => a.orderIndex - b.orderIndex);
+                const preselectedIds = matchedPhotos.map(p => p.assetId);
+                
+                console.log('✅ [LocationBasedImagePicker] Preselected count:', preselectedIds.length);
+                console.log('✅ [LocationBasedImagePicker] Order:', matchedPhotos.map(p => p.orderIndex));
+                
+                setSelectedPhotos(preselectedSet);
+                setSelectedPhotoOrder(preselectedIds);
+                setInitialSelectedPhotoIds(preselectedSet); // 초기 선택된 사진 저장 (이미 업로드된 사진)
+                setAssetIdToPhotoIdMap(assetToPhotoMap); // asset ID → Photo ID 매핑 저장
+            }
         } catch (error) {
             console.error('사진 로딩 오류:', error);
             Alert.alert('오류', '사진을 불러오는 중 오류가 발생했습니다.');
@@ -217,19 +299,48 @@ export default function LocationBasedImagePicker({
             const newSet = new Set(prev);
             if (newSet.has(assetId)) {
                 newSet.delete(assetId);
+                // 순서 배열에서도 제거
+                setSelectedPhotoOrder((prevOrder) => prevOrder.filter((id) => id !== assetId));
             } else {
                 newSet.add(assetId);
+                // 순서 배열에 추가
+                setSelectedPhotoOrder((prevOrder) => [...prevOrder, assetId]);
             }
             return newSet;
         });
     };
 
     const handleConfirm = () => {
-        const selectedUris = photos
-            .filter((photo) => selectedPhotos.has(photo.asset.id))
-            .map((photo) => photo.asset.uri);
+        // selectedPhotoOrder를 기존 사진과 새 사진으로 분리
+        const orderedExistingPhotoIds: string[] = []; // 기존 사진의 Photo ID (순서대로)
+        const newlySelectedAssetIds: string[] = []; // 새 사진의 asset ID (순서대로)
+        
+        selectedPhotoOrder.forEach((assetId) => {
+            if (initialSelectedPhotoIds.has(assetId)) {
+                // 기존 사진: asset ID → Photo ID 변환
+                const photoId = assetIdToPhotoIdMap.get(assetId);
+                if (photoId) {
+                    orderedExistingPhotoIds.push(photoId);
+                }
+            } else {
+                // 새 사진
+                newlySelectedAssetIds.push(assetId);
+            }
+        });
+        
+        console.log('📤 [LocationBasedImagePicker] Total selected:', selectedPhotoOrder.length);
+        console.log('📤 [LocationBasedImagePicker] Existing photos (ordered):', orderedExistingPhotoIds);
+        console.log('📤 [LocationBasedImagePicker] New photos to upload:', newlySelectedAssetIds.length);
+        
+        // 새로 추가된 사진의 URI 추출
+        const photoMap = new Map(photos.map(p => [p.asset.id, p.asset.uri]));
+        const newPhotoUris = newlySelectedAssetIds
+            .map(id => photoMap.get(id))
+            .filter((uri): uri is string => uri !== undefined);
 
-        onSelectPhotos(selectedUris);
+        // 새 사진 URI, visibility, 기존 사진 순서 전달
+        onSelectPhotos(newPhotoUris, selectedVisibility, orderedExistingPhotoIds);
+        setSelectedVisibility('SHARED'); // 초기화
         onClose();
     };
 
@@ -274,10 +385,51 @@ export default function LocationBasedImagePicker({
                                 selectedPhotos.size === 0 && styles.confirmTextDisabled,
                             ]}
                         >
-                            추가 ({selectedPhotos.size})
+                            추가 ({selectedPhotoOrder.filter(id => !initialSelectedPhotoIds.has(id)).length})
                         </Text>
                     </TouchableOpacity>
                 </View>
+
+                {/* 앨범 선택 UI (hideVisibilitySelector가 false일 때만 표시) */}
+                {!hideVisibilitySelector && (
+                    <View style={styles.visibilitySelector}>
+                        <TouchableOpacity
+                            style={[
+                                styles.visibilityOption,
+                                selectedVisibility === 'SHARED' && styles.visibilityOptionActive
+                            ]}
+                            onPress={() => setSelectedVisibility('SHARED')}
+                        >
+                            <Feather
+                                name="users"
+                                size={16}
+                                color={selectedVisibility === 'SHARED' ? '#088CDA' : '#9E9E9E'}
+                            />
+                            <Text style={[
+                                styles.visibilityText,
+                                selectedVisibility === 'SHARED' && styles.visibilityTextActive
+                            ]}>공용 앨범</Text>
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity
+                            style={[
+                                styles.visibilityOption,
+                                selectedVisibility === 'PERSONAL' && styles.visibilityOptionActive
+                            ]}
+                            onPress={() => setSelectedVisibility('PERSONAL')}
+                        >
+                            <Feather
+                                name="lock"
+                                size={16}
+                                color={selectedVisibility === 'PERSONAL' ? '#088CDA' : '#9E9E9E'}
+                            />
+                            <Text style={[
+                                styles.visibilityText,
+                                selectedVisibility === 'PERSONAL' && styles.visibilityTextActive
+                            ]}>개인 앨범</Text>
+                        </TouchableOpacity>
+                    </View>
+                )}
 
                 {/* 로딩 */}
                 {loading && (
@@ -301,34 +453,41 @@ export default function LocationBasedImagePicker({
                             style={styles.photoList}
                             contentContainerStyle={styles.photoGrid}
                             columnWrapperStyle={styles.photoRow}
-                            renderItem={({ item, index }) => (
-                                <TouchableOpacity
-                                    style={[
-                                        styles.photoItem,
-                                        (index + 1) % 3 !== 0 && styles.photoItemSpacing,
-                                    ]}
-                                    onPress={() => togglePhotoSelection(item.asset.id)}
-                                >
-                                    <Image
-                                        source={{ uri: item.asset.uri }}
-                                        style={styles.photoImage}
-                                    />
-                                    {selectedPhotos.has(item.asset.id) && (
-                                        <View style={styles.selectedOverlay}>
-                                            <View style={styles.checkmark}>
-                                                <Feather name="check" size={16} color="#fff" />
+                            renderItem={({ item, index }) => {
+                                const isSelected = selectedPhotos.has(item.asset.id);
+                                const orderIndex = selectedPhotoOrder.indexOf(item.asset.id);
+                                const orderNumber = orderIndex >= 0 ? orderIndex + 1 : 0;
+                                
+                                return (
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.photoItem,
+                                            (index + 1) % 3 !== 0 && styles.photoItemSpacing,
+                                        ]}
+                                        onPress={() => togglePhotoSelection(item.asset.id)}
+                                    >
+                                        <Image
+                                            source={{ uri: item.asset.uri }}
+                                            style={styles.photoImage}
+                                        />
+                                        {isSelected && (
+                                            <>
+                                                <View style={styles.selectedOverlay} />
+                                                <View style={styles.orderBadge}>
+                                                    <Text style={styles.orderText}>{orderNumber}</Text>
+                                                </View>
+                                            </>
+                                        )}
+                                        {!isSelected && hasNearbyPhotos && item.hasLocation && item.distance !== undefined && (
+                                            <View style={styles.distanceBadge}>
+                                                <Text style={styles.distanceText}>
+                                                    {formatDistance(item.distance)}
+                                                </Text>
                                             </View>
-                                        </View>
-                                    )}
-                                    {hasNearbyPhotos && item.hasLocation && item.distance !== undefined && (
-                                        <View style={styles.distanceBadge}>
-                                            <Text style={styles.distanceText}>
-                                                {formatDistance(item.distance)}
-                                            </Text>
-                                        </View>
-                                    )}
-                                </TouchableOpacity>
-                            )}
+                                        )}
+                                    </TouchableOpacity>
+                                );
+                            }}
                         />
                     )
                 )}
@@ -467,6 +626,25 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
+    orderBadge: {
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        transform: [{ translateX: -20 }, { translateY: -20 }],
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#088CDA',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: '#fff',
+    },
+    orderText: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#fff',
+    },
     distanceBadge: {
         position: 'absolute',
         bottom: 4,
@@ -510,6 +688,39 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600',
         color: '#fff',
+    },
+    visibilitySelector: {
+        flexDirection: 'row',
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        gap: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F0F0F0',
+    },
+    visibilityOption: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderRadius: 8,
+        backgroundColor: '#F6F6F6',
+    },
+    visibilityOptionActive: {
+        backgroundColor: '#E3F2FD',
+        borderWidth: 1,
+        borderColor: '#088CDA',
+    },
+    visibilityText: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: '#9E9E9E',
+    },
+    visibilityTextActive: {
+        color: '#088CDA',
+        fontWeight: '600',
     },
 });
 

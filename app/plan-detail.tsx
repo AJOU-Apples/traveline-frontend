@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
     View,
     StyleSheet,
@@ -10,7 +10,7 @@ import {
     PanResponder
 } from 'react-native';
 import { Text } from 'react-native-paper';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import Constants from 'expo-constants';
@@ -142,9 +142,13 @@ const GOOGLE_MAPS_API_KEY = Platform.select({
 
 export default function PlanDetailScreen() {
     const { planId } = useLocalSearchParams<{ planId: string }>();
-    const { getTravelPlan, reorderPlaces, getFlightsByPlan, getAccommodationsByPlan } = useUser();
+    const { getTravelPlan, reorderPlaces, getFlightsByPlan, getAccommodationsByPlan, getPlacesByDay } = useUser();
     const [selectedDay, setSelectedDay] = useState(1);
     const [isEditMode, setIsEditMode] = useState(false);
+    const [isLoadingPlaces, setIsLoadingPlaces] = useState(false);
+
+    // 중복 로딩 방지를 위한 ref
+    const isLoadingPlacesRef = useRef(false);
 
     // 저장된 여행 데이터 불러오기
     const tripData = getTravelPlan(planId || '');
@@ -234,6 +238,41 @@ export default function PlanDetailScreen() {
         })
     ).current;
 
+    // Places 로드 함수
+    const loadPlaces = async () => {
+        if (!planId || isLoadingPlacesRef.current) return;
+
+        isLoadingPlacesRef.current = true;
+        setIsLoadingPlaces(true);
+
+        try {
+            await getPlacesByDay(planId, selectedDay);
+        } catch (error) {
+            console.error('Failed to load places:', error);
+        } finally {
+            setIsLoadingPlaces(false);
+            isLoadingPlacesRef.current = false;
+        }
+    };
+
+    // 화면 포커스될 때 places 로드
+    useFocusEffect(
+        useCallback(() => {
+            if (planId && tripData) {
+                loadPlaces();
+            }
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [planId, selectedDay]) // loadPlaces는 의도적으로 제외
+    );
+
+    // selectedDay 변경 시 places 로드
+    useEffect(() => {
+        if (planId && tripData) {
+            loadPlaces();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedDay]); // loadPlaces는 의도적으로 제외
+
     if (!tripData) {
         return (
             <View style={styles.container}>
@@ -250,72 +289,24 @@ export default function PlanDetailScreen() {
     }
 
     const currentDayData = tripData.days.find(day => day.dayNumber === selectedDay);
-
-    // 여행지별 초기 지도 좌표 (TODO: BE에서 받아오기)
-    const defaultCoordinates: { [key: string]: { latitude: number; longitude: number } } = {
-        // 일본
-        '도쿄': { latitude: 35.6812, longitude: 139.7671 },  // 도쿄역 중심
-        '오사카': { latitude: 34.6937, longitude: 135.5023 },
-        '후쿠오카': { latitude: 33.5904, longitude: 130.4017 },
-        '가고시마': { latitude: 31.5969, longitude: 130.5571 },
-        '삿포로': { latitude: 43.0642, longitude: 141.3469 },
-        '시즈오카': { latitude: 34.9756, longitude: 138.3828 },
-        '나고야': { latitude: 35.1815, longitude: 136.9066 },
-        '오키나와': { latitude: 26.2124, longitude: 127.6809 },
-        '마쓰야마': { latitude: 33.8392, longitude: 132.7658 },
-        '구마모토': { latitude: 32.8031, longitude: 130.7079 },
-        '고베': { latitude: 34.6901, longitude: 135.1955 },
-        '교토': { latitude: 35.0116, longitude: 135.7681 },
-        // 한국
-        '서울': { latitude: 37.5665, longitude: 126.9780 },
-        '부산': { latitude: 35.1796, longitude: 129.0756 },
-        '제주': { latitude: 33.4996, longitude: 126.5312 },
-        '강릉': { latitude: 37.7519, longitude: 128.8761 },
-        '여수': { latitude: 34.7604, longitude: 127.6622 },
-        '경주': { latitude: 35.8562, longitude: 129.2247 },
-        // 동남아
-        '방콕': { latitude: 13.7563, longitude: 100.5018 },
-        '싱가포르': { latitude: 1.3521, longitude: 103.8198 },
-        '나트랑': { latitude: 12.2388, longitude: 109.1967 },
-        '마닐라': { latitude: 14.5995, longitude: 120.9842 },
-        '미얀마': { latitude: 21.9162, longitude: 95.9560 },  // 양곤
-        '치앙마이': { latitude: 18.7883, longitude: 98.9853 },
-        '하노이': { latitude: 21.0285, longitude: 105.8542 },
-        '하롱비': { latitude: 20.9101, longitude: 107.1839 },
-        '호치민': { latitude: 10.8231, longitude: 106.6297 },
-        '다낭': { latitude: 16.0544, longitude: 108.2022 },
-        '푸켓': { latitude: 7.8804, longitude: 98.3923 },
-        // 유럽
-        '파리': { latitude: 48.8566, longitude: 2.3522 },
-        '런던': { latitude: 51.5074, longitude: -0.1278 },
-        '로마': { latitude: 41.9028, longitude: 12.4964 },
-        '바르셀로나': { latitude: 41.3874, longitude: 2.1686 },
-        '암스테르담': { latitude: 52.3676, longitude: 4.9041 },
-        '베를린': { latitude: 52.5200, longitude: 13.4050 },
-        '하이델베르크': { latitude: 49.3988, longitude: 8.6724 },
-        '프라하': { latitude: 50.0755, longitude: 14.4378 },
-        // 미국
-        '뉴욕': { latitude: 40.7128, longitude: -74.0060 },
-        '샌프란시스코': { latitude: 37.7749, longitude: -122.4194 },
-        '로스앤젤레스': { latitude: 34.0522, longitude: -118.2437 },
-        '라스베이거스': { latitude: 36.1699, longitude: -115.1398 },
-        '하와이': { latitude: 21.3099, longitude: -157.8581 },  // 호놀룰루
-        // 기타
-        '시드니': { latitude: -33.8688, longitude: 151.2093 },
-        '멜버른': { latitude: -37.8136, longitude: 144.9631 },
-        '두바이': { latitude: 25.2048, longitude: 55.2708 },
-    };
-
-    // 여행지 이름에서 좌표 추출 (기본값: 서울)
+    // 초기 지도 좌표 (City 정보에서 가져오기)
     const initialRegion = useMemo(() => {
-        const destination = tripData.destination;
-        const coords = defaultCoordinates[destination] || { latitude: 37.5665, longitude: 126.9780 };
+        if (tripData?.destinationCity?.latitude && tripData?.destinationCity?.longitude) {
+            return {
+                latitude: tripData.destinationCity.latitude,
+                longitude: tripData.destinationCity.longitude,
+                latitudeDelta: 0.02,
+                longitudeDelta: 0.02,
+            };
+        }
+        // Fallback: 서울
         return {
-            ...coords,
-            latitudeDelta: 0.02,  // 더 확대된 뷰
-            longitudeDelta: 0.02, // 더 확대된 뷰
+            latitude: 37.5665,
+            longitude: 126.9780,
+            latitudeDelta: 0.02,
+            longitudeDelta: 0.02,
         };
-    }, [tripData.destination]);
+    }, [tripData?.destinationCity]);
 
     // 선택한 일차의 장소들을 마커로 표시
     const markers = useMemo(() => {
@@ -400,8 +391,10 @@ export default function PlanDetailScreen() {
     };
 
     const handleAddPlace = () => {
-        // 목적지 좌표 정보 전달
-        const destinationCoords = defaultCoordinates[tripData.destination] || defaultCoordinates['서울'];
+        // 목적지 좌표 정보 전달 (City 정보에서 가져오기)
+        const destinationCoords = tripData.destinationCity?.latitude && tripData.destinationCity?.longitude
+            ? { latitude: tripData.destinationCity.latitude, longitude: tripData.destinationCity.longitude }
+            : { latitude: 37.5665, longitude: 126.9780 }; // Fallback: 서울
 
         router.push({
             pathname: '/add-place',
@@ -770,7 +763,9 @@ export default function PlanDetailScreen() {
                                 keyExtractor={(item) => item.id}
                                 onDragEnd={({ data, from, to }) => {
                                     if (from !== to && planId) {
-                                        reorderPlaces(planId, selectedDay, from, to);
+                                        // data는 재정렬된 places 배열
+                                        const placeIds = data.map(place => place.id);
+                                        reorderPlaces(planId, selectedDay, placeIds);
                                     }
                                 }}
                                 activationDistance={isEditMode ? 10 : 999999}

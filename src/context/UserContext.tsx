@@ -1,4 +1,7 @@
-import React, { createContext, useContext, useMemo, useState, PropsWithChildren } from 'react';
+import React, { createContext, useContext, useMemo, useState, PropsWithChildren, useEffect, useCallback } from 'react';
+import { AppState, AppStateStatus, Alert } from 'react-native';
+import { authApi } from '../utils/authApi';
+import { travelPlanApi, TravelPlanDto } from '../utils/travelPlanApi';
 
 export type Trip = {
   id: string;
@@ -10,8 +13,36 @@ export type Trip = {
 
 export type Photo = {
   id: string;
+  travelPlanId: string;
+  travelDayId?: string;
+  dayNumber?: number;
+  placeId?: string;
+  userId: string;
+  username: string;
+  // 파일 정보
   uri: string;
-  timestamp: number;
+  thumbnailUri?: string;
+  filename: string;
+  fileSize?: number;
+  mimeType?: string;
+  // 이미지 정보
+  width?: number;
+  height?: number;
+  // 위치 정보
+  latitude?: number;
+  longitude?: number;
+  // 순서
+  orderIndex?: number;
+  // 메타데이터
+  timestamp?: string;
+  uploadedAt: string;
+  // 공개 설정
+  visibility: 'PERSONAL' | 'SHARED';
+  // 캡션
+  caption?: string;
+  // 타임스탬프
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type Expense = {
@@ -24,12 +55,20 @@ export type Expense = {
 
 export type Place = {
   id: string;
+  travelPlanId?: string;
+  travelDayId?: string;
+  dayNumber?: number;
   name: string;
   address?: string;
-  time?: string;
-  memo?: string;
   latitude?: number;
   longitude?: number;
+  placeId?: string; // Google Place ID
+  time?: string;
+  orderIndex?: number;
+  memo?: string; // 공유 메모
+  personalMemos?: Record<string, string>; // 개인 메모
+  isVisited?: boolean;
+  visitedAt?: string;
   photos?: Photo[];
   expenses?: Expense[];
 };
@@ -83,33 +122,118 @@ export type TravelPlan = {
   id: string;
   title: string;
   destination: string;
-  startDate: string; // YYYY.MM.DD
-  endDate: string; // YYYY.MM.DD
+  destinationId?: number;
+  destinationCity?: {
+    id: number;
+    name: string;
+    isInternational: boolean;
+    latitude?: number;
+    longitude?: number;
+  };
+  startDate: string; // YYYY.MM.DD (화면 표시용)
+  endDate: string; // YYYY.MM.DD (화면 표시용)
   participants: number;
   days: TravelDay[];
 };
 
+export type AuthUser = {
+  id: number;
+  email: string;
+  name: string;
+  username: string;
+  profileImageUrl?: string;
+};
+
+// ============ 유틸리티 함수 ============
+
+// 날짜 변환: YYYY.MM.DD -> YYYY-MM-DD (API 요청용)
+const formatDateToApi = (dateStr: string): string => {
+  return dateStr.replace(/\./g, '-');
+};
+
+// displayDate 생성: YYYY-MM-DD -> "11월 20일(목)"
+const formatDisplayDate = (dateStr: string): string => {
+  const date = new Date(dateStr);
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
+  const weekday = weekdays[date.getDay()];
+  return `${month}월 ${day}일(${weekday})`;
+};
+
+// 백엔드 DTO를 프론트엔드 타입으로 변환
+const convertTravelPlanFromDto = (dto: TravelPlanDto): TravelPlan => {
+  // 백엔드 날짜 형식: yyyy.MM.dd -> 프론트엔드 형식: YYYY.MM.DD (동일하므로 그대로 사용)
+  return {
+    id: dto.id.toString(),
+    title: dto.title,
+    destination: dto.destination.name,
+    destinationId: dto.destination.id,
+    destinationCity: {
+      id: dto.destination.id,
+      name: dto.destination.name,
+      isInternational: dto.destination.isInternational,
+      latitude: dto.destination.latitude,
+      longitude: dto.destination.longitude,
+    },
+    startDate: dto.startDate, // 이미 yyyy.MM.dd 형식
+    endDate: dto.endDate, // 이미 yyyy.MM.dd 형식
+    participants: dto.participants,
+    days: dto.days.map(day => ({
+      id: day.id.toString(),
+      dayNumber: day.dayNumber,
+      date: day.date,
+      displayDate: day.displayDate || formatDisplayDate(day.date),
+      places: day.places?.map(place => ({
+        id: place.id.toString(),
+        name: place.name,
+        address: place.address,
+        time: place.time,
+        memo: place.memo,
+        latitude: place.latitude,
+        longitude: place.longitude,
+        // photos와 expenses는 별도 API로 로드됨
+        photos: [],
+        expenses: [],
+      })) || [], // places가 없으면 빈 배열로 처리
+    })),
+  };
+};
+
 type UserContextValue = {
   username: string;
+  authUser: AuthUser | null;
+  isAuthenticated: boolean;
   upcomingTrip?: Trip;
   recentTrips: Trip[];
   popularTrips: Trip[];
   travelPlans: TravelPlan[];
   flights: Flight[];
   accommodations: Accommodation[];
-  addTravelPlan: (plan: Omit<TravelPlan, 'id'>) => string;
+  isLoadingPlans: boolean;
+  // Auth methods
+  setAuthUser: (user: AuthUser | null) => void;
+  logout: () => Promise<void>;
+  loadTravelPlans: () => Promise<void>;
+  // Travel Plan methods
+  addTravelPlan: (plan: Omit<TravelPlan, 'id'>) => Promise<string>;
   getTravelPlan: (id: string) => TravelPlan | undefined;
-  updateTravelPlan: (id: string, plan: Partial<TravelPlan>) => void;
-  addPlaceToDay: (planId: string, dayNumber: number, place: Omit<Place, 'id'>) => void;
-  deletePlaceFromDay: (planId: string, dayNumber: number, placeId: string) => void;
-  reorderPlaces: (planId: string, dayNumber: number, fromIndex: number, toIndex: number) => void;
-  addPhotoToPlace: (planId: string, dayNumber: number, placeId: string, photoUri: string) => void;
-  deletePhotoFromPlace: (planId: string, dayNumber: number, placeId: string, photoId: string) => void;
+  updateTravelPlan: (id: string, plan: Partial<TravelPlan>) => Promise<void>;
+  // Place methods
+  addPlaceToDay: (planId: string, dayNumber: number, place: Omit<Place, 'id'>) => Promise<void>;
+  getPlacesByDay: (planId: string, dayNumber: number) => Promise<Place[]>;
+  deletePlaceFromDay: (planId: string, dayNumber: number, placeId: string) => Promise<void>;
+  reorderPlaces: (planId: string, dayNumber: number, placeIds: string[]) => Promise<void>;
+  // Photo methods
+  uploadPhotoToPlace: (planId: string, dayNumber: number, placeId: string, photoUri: string, visibility?: 'PERSONAL' | 'SHARED', caption?: string) => Promise<Photo>;
+  getPhotosByPlace: (placeId: string) => Promise<Photo[]>;
+  deletePhoto: (photoId: string) => Promise<void>;
+  reorderPhotos: (placeId: string, visibility: 'PERSONAL' | 'SHARED', photoIds: string[]) => Promise<void>;
   // Memo methods
-  updatePlaceMemo: (planId: string, dayNumber: number, placeId: string, memo: string) => void;
-  // Expense methods
-  addExpenseToPlace: (planId: string, dayNumber: number, placeId: string, expense: Omit<Expense, 'id' | 'timestamp'>) => void;
-  deleteExpenseFromPlace: (planId: string, dayNumber: number, placeId: string, expenseId: string) => void;
+  updatePlaceMemo: (planId: string, dayNumber: number, placeId: string, memo: string) => Promise<void>;
+  // Expense methods (TODO: 백엔드 구현 후 활성화)
+  // addExpenseToPlace: (planId: string, dayNumber: number, placeId: string, expense: Omit<Expense, 'id' | 'timestamp'>) => Promise<void>;
+  // deleteExpenseFromPlace: (planId: string, dayNumber: number, placeId: string, expenseId: string) => Promise<void>;
   // Flight methods
   getFlightsByPlan: (planId: string) => Flight[];
   addFlight: (flight: Omit<Flight, 'id'>) => string;
@@ -146,254 +270,691 @@ const defaultTrips: Trip[] = [
 const UserContext = createContext<UserContextValue | undefined>(undefined);
 
 export const UserProvider = ({ children }: PropsWithChildren) => {
-  const [username] = useState('Team Apples');
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [trips] = useState<Trip[]>(defaultTrips);
   const [travelPlans, setTravelPlans] = useState<TravelPlan[]>([]);
   const [flights, setFlights] = useState<Flight[]>([]);
   const [accommodations, setAccommodations] = useState<Accommodation[]>([]);
+  const [isLoadingPlans, setIsLoadingPlans] = useState(false);
+
+  // username: 로그인 상태면 name (이름), 게스트면 "익명의 여행객"
+  const username = authUser ? authUser.username : '익명의 여행객';
+
+  const handleAppStateChange = useCallback(async (nextAppState: AppStateStatus) => {
+    // 앱이 포그라운드로 돌아올 때만 체크
+    if (nextAppState === 'active' && authUser) {
+      console.log('App became active, checking token...');
+
+      // 토큰 초기화 (AsyncStorage에서 다시 로드)
+      await authApi.initializeTokens();
+
+      // 토큰 유효성 체크 및 자동 갱신
+      const isTokenValid = await authApi.checkAndRefreshToken();
+
+      if (!isTokenValid) {
+        // 토큰이 만료되었으면 로그아웃 처리
+        console.log('Token expired while app was in background, logging out...');
+        await authApi.logout();
+        setAuthUser(null);
+        setTravelPlans([]);
+        setFlights([]);
+        setAccommodations([]);
+
+        // 사용자에게 알림
+        Alert.alert(
+          '세션 만료',
+          '오랫동안 사용하지 않아 자동으로 로그아웃되었습니다.\n다시 로그인해주세요.',
+          [{ text: '확인', style: 'default' }]
+        );
+      }
+    }
+  }, [authUser]);
+
+  // 앱 시작 시 저장된 사용자 정보 불러오기 및 토큰 체크
+  useEffect(() => {
+    loadUserData();
+  }, []);
+
+  // 앱이 포그라운드로 돌아올 때 토큰 체크
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+
+    return () => {
+      subscription.remove();
+    };
+  }, [handleAppStateChange]);
+
+  const loadUserData = async () => {
+    try {
+      // 먼저 토큰 초기화
+      await authApi.initializeTokens();
+
+      // 토큰 유효성 체크 및 자동 갱신
+      const isTokenValid = await authApi.checkAndRefreshToken();
+
+      if (!isTokenValid) {
+        // 토큰이 만료되었으면 로그아웃 처리
+        console.log('Token expired, logging out...');
+        await authApi.logout();
+        setAuthUser(null);
+
+        // UI가 준비된 후 알림 표시 (약간의 지연)
+        setTimeout(() => {
+          Alert.alert(
+            '세션 만료',
+            '오랫동안 사용하지 않아 자동으로 로그아웃되었습니다.\n다시 로그인해주세요.',
+            [{ text: '확인', style: 'default' }]
+          );
+        }, 500);
+        return;
+      }
+
+      // 토큰이 유효하면 사용자 정보 불러오기
+      const userData = await authApi.getUserData();
+      if (userData) {
+        setAuthUser(userData);
+      }
+    } catch (error) {
+      console.error('Failed to load user data:', error);
+      // 에러 발생 시에도 로그아웃 처리
+      await authApi.logout();
+      setAuthUser(null);
+    }
+  };
+
+  const loadTravelPlans = useCallback(async () => {
+    if (!authUser) return;
+
+    try {
+      setIsLoadingPlans(true);
+      const plans = await travelPlanApi.getMyTravelPlans();
+      const convertedPlans = plans.map(convertTravelPlanFromDto);
+      setTravelPlans(convertedPlans);
+    } catch (error) {
+      console.error('Failed to load travel plans:', error);
+    } finally {
+      setIsLoadingPlans(false);
+    }
+  }, [authUser]);
+
+  // 로그인 후 여행 계획 불러오기
+  useEffect(() => {
+    if (authUser) {
+      loadTravelPlans();
+    } else {
+      setTravelPlans([]);
+    }
+  }, [authUser, loadTravelPlans]);
+
+  const logout = async () => {
+    try {
+      await authApi.logout();
+      setAuthUser(null);
+      setTravelPlans([]);
+      setFlights([]);
+      setAccommodations([]);
+    } catch (error) {
+      console.error('Logout failed:', error);
+      throw error;
+    }
+  };
 
   const upcomingTrip = useMemo(() => trips[0], [trips]);
 
-  const addTravelPlan = (plan: Omit<TravelPlan, 'id'>) => {
-    const id = `plan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const newPlan: TravelPlan = {
-      ...plan,
-      id,
-    };
-    setTravelPlans((prev) => [...prev, newPlan]);
-    return id;
+  const addTravelPlan = async (plan: Omit<TravelPlan, 'id'>): Promise<string> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    if (!plan.destinationId) {
+      throw new Error('목적지 ID가 필요합니다.');
+    }
+
+    try {
+      // 날짜 형식 변환: YYYY.MM.DD -> YYYY-MM-DD
+      const apiData = {
+        title: plan.title,
+        destinationId: plan.destinationId,
+        startDate: formatDateToApi(plan.startDate),
+        endDate: formatDateToApi(plan.endDate),
+        participants: plan.participants,
+      };
+
+      const createdPlan = await travelPlanApi.createTravelPlan(apiData);
+      const convertedPlan = convertTravelPlanFromDto(createdPlan);
+
+      setTravelPlans((prev) => [...prev, convertedPlan]);
+      return convertedPlan.id;
+    } catch (error) {
+      console.error('Failed to create travel plan:', error);
+      throw error;
+    }
   };
 
   const getTravelPlan = (id: string) => {
     return travelPlans.find((plan) => plan.id === id);
   };
 
-  const updateTravelPlan = (id: string, updates: Partial<TravelPlan>) => {
-    setTravelPlans((prev) =>
-      prev.map((plan) => (plan.id === id ? { ...plan, ...updates } : plan))
-    );
+  const updateTravelPlan = async (id: string, updates: Partial<TravelPlan>) => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      // 날짜 형식 변환
+      const apiUpdates: any = {};
+      if (updates.title) apiUpdates.title = updates.title;
+      if (updates.destinationId) apiUpdates.destinationId = updates.destinationId;
+      if (updates.startDate) apiUpdates.startDate = formatDateToApi(updates.startDate);
+      if (updates.endDate) apiUpdates.endDate = formatDateToApi(updates.endDate);
+      if (updates.participants !== undefined) apiUpdates.participants = updates.participants;
+
+      const updatedPlan = await travelPlanApi.updateTravelPlan(parseInt(id), apiUpdates);
+      const convertedPlan = convertTravelPlanFromDto(updatedPlan);
+
+      setTravelPlans((prev) =>
+        prev.map((plan) => (plan.id === id ? convertedPlan : plan))
+      );
+    } catch (error) {
+      console.error('Failed to update travel plan:', error);
+      throw error;
+    }
   };
 
-  const addPlaceToDay = (planId: string, dayNumber: number, place: Omit<Place, 'id'>) => {
-    const placeId = `place_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const newPlace: Place = {
-      ...place,
-      id: placeId,
-    };
+  const addPlaceToDay = async (planId: string, dayNumber: number, place: Omit<Place, 'id'>) => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
 
-    setTravelPlans((prev) =>
-      prev.map((plan) => {
-        if (plan.id !== planId) return plan;
+    try {
+      const createdPlace = await travelPlanApi.addPlace({
+        travelPlanId: parseInt(planId),
+        dayNumber: dayNumber,
+        name: place.name,
+        address: place.address,
+        latitude: place.latitude,
+        longitude: place.longitude,
+        placeId: place.placeId,
+        time: place.time,
+        memo: place.memo,
+      });
 
-        return {
-          ...plan,
-          days: plan.days.map((day) => {
-            if (day.dayNumber !== dayNumber) return day;
+      const newPlace: Place = {
+        id: createdPlace.id.toString(),
+        travelPlanId: createdPlace.travelPlanId.toString(),
+        travelDayId: createdPlace.travelDayId.toString(),
+        dayNumber: createdPlace.dayNumber,
+        name: createdPlace.name,
+        address: createdPlace.address,
+        latitude: createdPlace.latitude,
+        longitude: createdPlace.longitude,
+        placeId: createdPlace.placeId,
+        time: createdPlace.time,
+        orderIndex: createdPlace.orderIndex,
+        memo: createdPlace.memo,
+        personalMemos: createdPlace.personalMemos,
+        isVisited: createdPlace.isVisited,
+        visitedAt: createdPlace.visitedAt,
+        photos: [],
+        expenses: [],
+      };
 
-            return {
-              ...day,
-              places: [...day.places, newPlace],
-            };
-          }),
-        };
-      })
-    );
+      setTravelPlans((prev) =>
+        prev.map((plan) => {
+          if (plan.id !== planId) return plan;
+
+          return {
+            ...plan,
+            days: plan.days.map((day) => {
+              if (day.dayNumber !== dayNumber) return day;
+
+              return {
+                ...day,
+                places: [...day.places, newPlace],
+              };
+            }),
+          };
+        })
+      );
+    } catch (error) {
+      console.error('Failed to add place:', error);
+      throw error;
+    }
   };
 
-  const deletePlaceFromDay = (planId: string, dayNumber: number, placeId: string) => {
-    setTravelPlans((prev) =>
-      prev.map((plan) => {
-        if (plan.id !== planId) return plan;
+  const getPlacesByDay = async (planId: string, dayNumber: number): Promise<Place[]> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
 
-        return {
-          ...plan,
-          days: plan.days.map((day) => {
-            if (day.dayNumber !== dayNumber) return day;
+    try {
+      const places = await travelPlanApi.getPlacesByDay(parseInt(planId), dayNumber);
 
+      const convertedPlaces = places.map(place => ({
+        id: place.id.toString(),
+        travelPlanId: place.travelPlanId.toString(),
+        travelDayId: place.travelDayId.toString(),
+        dayNumber: place.dayNumber,
+        name: place.name,
+        address: place.address,
+        latitude: place.latitude,
+        longitude: place.longitude,
+        placeId: place.placeId,
+        time: place.time,
+        orderIndex: place.orderIndex,
+        memo: place.memo,
+        personalMemos: place.personalMemos,
+        isVisited: place.isVisited,
+        visitedAt: place.visitedAt,
+        photos: [],
+        expenses: [],
+      }));
+
+      // travelPlans 상태 업데이트 - 해당 day의 places를 업데이트
+      setTravelPlans(prevPlans =>
+        prevPlans.map(plan => {
+          if (plan.id === planId) {
             return {
-              ...day,
-              places: day.places.filter((place) => place.id !== placeId),
-            };
-          }),
-        };
-      })
-    );
-  };
-
-  const reorderPlaces = (planId: string, dayNumber: number, fromIndex: number, toIndex: number) => {
-    setTravelPlans((prev) =>
-      prev.map((plan) => {
-        if (plan.id !== planId) return plan;
-
-        return {
-          ...plan,
-          days: plan.days.map((day) => {
-            if (day.dayNumber !== dayNumber) return day;
-
-            const newPlaces = [...day.places];
-            const [movedPlace] = newPlaces.splice(fromIndex, 1);
-            newPlaces.splice(toIndex, 0, movedPlace);
-
-            return {
-              ...day,
-              places: newPlaces,
-            };
-          }),
-        };
-      })
-    );
-  };
-
-  const addPhotoToPlace = (planId: string, dayNumber: number, placeId: string, photoUri: string) => {
-    const photoId = `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const newPhoto: Photo = {
-      id: photoId,
-      uri: photoUri,
-      timestamp: Date.now(),
-    };
-
-    setTravelPlans((prev) =>
-      prev.map((plan) => {
-        if (plan.id !== planId) return plan;
-
-        return {
-          ...plan,
-          days: plan.days.map((day) => {
-            if (day.dayNumber !== dayNumber) return day;
-
-            return {
-              ...day,
-              places: day.places.map((place) => {
-                if (place.id !== placeId) return place;
-
-                return {
-                  ...place,
-                  photos: [...(place.photos || []), newPhoto],
-                };
+              ...plan,
+              days: plan.days.map(day => {
+                if (day.dayNumber === dayNumber) {
+                  return {
+                    ...day,
+                    places: convertedPlaces,
+                  };
+                }
+                return day;
               }),
             };
-          }),
-        };
-      })
-    );
+          }
+          return plan;
+        })
+      );
+
+      return convertedPlaces;
+    } catch (error) {
+      console.error('Failed to get places:', error);
+      throw error;
+    }
   };
 
-  const deletePhotoFromPlace = (planId: string, dayNumber: number, placeId: string, photoId: string) => {
-    setTravelPlans((prev) =>
-      prev.map((plan) => {
-        if (plan.id !== planId) return plan;
+  const deletePlaceFromDay = async (planId: string, dayNumber: number, placeId: string) => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
 
+    try {
+      await travelPlanApi.deletePlace(parseInt(placeId));
+
+      setTravelPlans((prev) =>
+        prev.map((plan) => {
+          if (plan.id !== planId) return plan;
+
+          return {
+            ...plan,
+            days: plan.days.map((day) => {
+              if (day.dayNumber !== dayNumber) return day;
+
+              return {
+                ...day,
+                places: day.places.filter((place) => place.id !== placeId),
+              };
+            }),
+          };
+        })
+      );
+    } catch (error) {
+      console.error('Failed to delete place:', error);
+      throw error;
+    }
+  };
+
+  const reorderPlaces = async (planId: string, dayNumber: number, placeIds: string[]) => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const reorderedPlaces = await travelPlanApi.reorderPlaces({
+        travelPlanId: parseInt(planId),
+        dayNumber: dayNumber,
+        placeIds: placeIds.map(id => parseInt(id)),
+      });
+
+      // 백엔드 응답으로 상태 업데이트
+      const convertedPlaces: Place[] = reorderedPlaces.map(place => ({
+        id: place.id.toString(),
+        travelPlanId: place.travelPlanId.toString(),
+        travelDayId: place.travelDayId.toString(),
+        dayNumber: place.dayNumber,
+        name: place.name,
+        address: place.address,
+        latitude: place.latitude,
+        longitude: place.longitude,
+        placeId: place.placeId,
+        time: place.time,
+        orderIndex: place.orderIndex,
+        memo: place.memo,
+        personalMemos: place.personalMemos,
+        isVisited: place.isVisited,
+        visitedAt: place.visitedAt,
+        photos: [],
+        expenses: [],
+      }));
+
+      setTravelPlans((prev) =>
+        prev.map((plan) => {
+          if (plan.id !== planId) return plan;
+
+          return {
+            ...plan,
+            days: plan.days.map((day) => {
+              if (day.dayNumber !== dayNumber) return day;
+
+              return {
+                ...day,
+                places: convertedPlaces,
+              };
+            }),
+          };
+        })
+      );
+    } catch (error) {
+      console.error('Failed to reorder places:', error);
+      throw error;
+    }
+  };
+
+  const uploadPhotoToPlace = async (planId: string, dayNumber: number, placeId: string, photoUri: string, visibility: 'PERSONAL' | 'SHARED' = 'SHARED', caption?: string): Promise<Photo> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      console.log('📤 [uploadPhotoToPlace] Starting upload... visibility:', visibility);
+      const uploadedPhoto = await travelPlanApi.uploadPhoto(
+        photoUri,
+        parseInt(planId),
+        dayNumber,
+        parseInt(placeId),
+        visibility,
+        caption
+      );
+      console.log('✅ [uploadPhotoToPlace] Upload successful, photoId:', uploadedPhoto.id);
+
+      const newPhoto: Photo = {
+        id: uploadedPhoto.id.toString(),
+        travelPlanId: uploadedPhoto.travelPlanId.toString(),
+        travelDayId: uploadedPhoto.travelDayId?.toString(),
+        dayNumber: uploadedPhoto.dayNumber,
+        placeId: uploadedPhoto.placeId?.toString(),
+        userId: uploadedPhoto.userId.toString(),
+        username: uploadedPhoto.username,
+        uri: uploadedPhoto.uri,
+        thumbnailUri: uploadedPhoto.thumbnailUri,
+        filename: uploadedPhoto.filename,
+        fileSize: uploadedPhoto.fileSize,
+        mimeType: uploadedPhoto.mimeType,
+        width: uploadedPhoto.width,
+        height: uploadedPhoto.height,
+        latitude: uploadedPhoto.latitude,
+        longitude: uploadedPhoto.longitude,
+        orderIndex: uploadedPhoto.orderIndex,
+        timestamp: uploadedPhoto.timestamp,
+        uploadedAt: uploadedPhoto.uploadedAt,
+        visibility: uploadedPhoto.visibility,
+        caption: uploadedPhoto.caption,
+        createdAt: uploadedPhoto.createdAt,
+        updatedAt: uploadedPhoto.updatedAt,
+      };
+
+      setTravelPlans((prev) =>
+        prev.map((plan) => {
+          if (plan.id !== planId) return plan;
+
+          return {
+            ...plan,
+            days: plan.days.map((day) => {
+              if (day.dayNumber !== dayNumber) return day;
+
+              return {
+                ...day,
+                places: day.places.map((place) => {
+                  if (place.id !== placeId) return place;
+
+                  return {
+                    ...place,
+                    photos: [...(place.photos || []), newPhoto],
+                  };
+                }),
+              };
+            }),
+          };
+        })
+      );
+
+      return newPhoto;
+    } catch (error) {
+      console.error('Failed to upload photo:', error);
+      throw error;
+    }
+  };
+
+  const getPhotosByPlace = async (placeId: string): Promise<Photo[]> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      console.log('🔄 [UserContext] getPhotosByPlace called for placeId:', placeId);
+      const photos = await travelPlanApi.getPhotosByPlace(parseInt(placeId));
+      console.log('✅ [UserContext] Backend returned photos:', photos?.length || 0);
+      console.log('📦 [UserContext] Raw backend response:', JSON.stringify(photos, null, 2));
+
+      const convertedPhotos = photos.map(photo => {
+        console.log('🔄 [UserContext] Converting photo:', photo.id, 'uri:', photo.uri);
         return {
+          id: photo.id.toString(),
+          travelPlanId: photo.travelPlanId.toString(),
+          travelDayId: photo.travelDayId?.toString(),
+          dayNumber: photo.dayNumber,
+          placeId: photo.placeId?.toString(),
+          userId: photo.userId.toString(),
+          username: photo.username,
+          uri: photo.uri,
+          thumbnailUri: photo.thumbnailUri,
+          filename: photo.filename,
+          fileSize: photo.fileSize,
+          mimeType: photo.mimeType,
+          width: photo.width,
+          height: photo.height,
+          latitude: photo.latitude,
+          longitude: photo.longitude,
+          orderIndex: photo.orderIndex,
+          timestamp: photo.timestamp,
+          uploadedAt: photo.uploadedAt,
+          visibility: photo.visibility,
+          caption: photo.caption,
+          createdAt: photo.createdAt,
+          updatedAt: photo.updatedAt,
+        };
+      });
+
+      console.log('✅ [UserContext] Converted photos:', convertedPhotos?.length || 0);
+
+      // travelPlans 상태 업데이트 - 해당 place의 photos를 업데이트
+      setTravelPlans(prevPlans =>
+        prevPlans.map(plan => ({
           ...plan,
-          days: plan.days.map((day) => {
-            if (day.dayNumber !== dayNumber) return day;
-
-            return {
-              ...day,
-              places: day.places.map((place) => {
-                if (place.id !== placeId) return place;
-
+          days: plan.days.map(day => ({
+            ...day,
+            places: day.places.map(place => {
+              if (place.id === placeId) {
+                console.log('✅ [UserContext] Updating photos for place:', place.id, 'with', convertedPhotos.length, 'photos');
                 return {
                   ...place,
-                  photos: (place.photos || []).filter((photo) => photo.id !== photoId),
+                  photos: convertedPhotos,
                 };
-              }),
-            };
-          }),
-        };
-      })
-    );
+              }
+              return place;
+            }),
+          })),
+        }))
+      );
+
+      return convertedPhotos;
+    } catch (error) {
+      console.error('❌ [UserContext] Failed to get photos:', error);
+      throw error;
+    }
+  };
+
+  const deletePhoto = async (photoId: string) => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      await travelPlanApi.deletePhoto(parseInt(photoId));
+
+      setTravelPlans((prev) =>
+        prev.map((plan) => ({
+          ...plan,
+          days: plan.days.map((day) => ({
+            ...day,
+            places: day.places.map((place) => ({
+              ...place,
+              photos: (place.photos || []).filter((photo) => photo.id !== photoId),
+            })),
+          })),
+        }))
+      );
+    } catch (error) {
+      console.error('Failed to delete photo:', error);
+      throw error;
+    }
+  };
+
+  const reorderPhotos = async (placeId: string, visibility: 'PERSONAL' | 'SHARED', photoIds: string[]) => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const updatedPhotos = await travelPlanApi.reorderPhotos(
+        parseInt(placeId),
+        visibility,
+        photoIds.map((id) => parseInt(id))
+      );
+
+      // 상태 업데이트 - 해당 visibility의 photos만 업데이트, 다른 visibility는 유지
+      setTravelPlans((prev) =>
+        prev.map((plan) => ({
+          ...plan,
+          days: plan.days.map((day) => ({
+            ...day,
+            places: day.places.map((place) => {
+              if (place.id === placeId) {
+                // 다른 visibility의 photos는 그대로 유지
+                const otherVisibilityPhotos = place.photos?.filter(
+                  (photo) => photo.visibility !== visibility
+                ) || [];
+
+                // 업데이트된 photos를 변환
+                const convertedUpdatedPhotos = updatedPhotos.map((photo) => ({
+                  id: photo.id.toString(),
+                  travelPlanId: photo.travelPlanId.toString(),
+                  travelDayId: photo.travelDayId?.toString(),
+                  dayNumber: photo.dayNumber,
+                  placeId: photo.placeId?.toString(),
+                  userId: photo.userId.toString(),
+                  username: photo.username,
+                  uri: photo.uri,
+                  thumbnailUri: photo.thumbnailUri,
+                  filename: photo.filename,
+                  fileSize: photo.fileSize,
+                  mimeType: photo.mimeType,
+                  width: photo.width,
+                  height: photo.height,
+                  latitude: photo.latitude,
+                  longitude: photo.longitude,
+                  orderIndex: photo.orderIndex,
+                  timestamp: photo.timestamp,
+                  uploadedAt: photo.uploadedAt,
+                  visibility: photo.visibility,
+                  caption: photo.caption,
+                  createdAt: photo.createdAt,
+                  updatedAt: photo.updatedAt,
+                }));
+
+                // 두 배열을 합침
+                return {
+                  ...place,
+                  photos: [...otherVisibilityPhotos, ...convertedUpdatedPhotos],
+                };
+              }
+              return place;
+            }),
+          })),
+        }))
+      );
+    } catch (error) {
+      console.error('Failed to reorder photos:', error);
+      throw error;
+    }
   };
 
   // Memo methods
-  const updatePlaceMemo = (planId: string, dayNumber: number, placeId: string, memo: string) => {
-    setTravelPlans((prev) =>
-      prev.map((plan) => {
-        if (plan.id !== planId) return plan;
+  const updatePlaceMemo = async (planId: string, dayNumber: number, placeId: string, memo: string) => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
 
-        return {
-          ...plan,
-          days: plan.days.map((day) => {
-            if (day.dayNumber !== dayNumber) return day;
+    try {
+      const updatedPlace = await travelPlanApi.updatePlaceMemo(parseInt(placeId), {
+        type: 'shared',
+        memo: memo,
+      });
 
-            return {
-              ...day,
-              places: day.places.map((place) => {
-                if (place.id !== placeId) return place;
+      setTravelPlans((prev) =>
+        prev.map((plan) => {
+          if (plan.id !== planId) return plan;
 
-                return {
-                  ...place,
-                  memo: memo,
-                };
-              }),
-            };
-          }),
-        };
-      })
-    );
+          return {
+            ...plan,
+            days: plan.days.map((day) => {
+              if (day.dayNumber !== dayNumber) return day;
+
+              return {
+                ...day,
+                places: day.places.map((place) => {
+                  if (place.id !== placeId) return place;
+
+                  return {
+                    ...place,
+                    memo: updatedPlace.memo,
+                    personalMemos: updatedPlace.personalMemos,
+                  };
+                }),
+              };
+            }),
+          };
+        })
+      );
+    } catch (error) {
+      console.error('Failed to update place memo:', error);
+      throw error;
+    }
   };
 
-  // Expense methods
-  const addExpenseToPlace = (planId: string, dayNumber: number, placeId: string, expense: Omit<Expense, 'id' | 'timestamp'>) => {
-    const expenseId = `expense_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const newExpense: Expense = {
-      ...expense,
-      id: expenseId,
-      timestamp: Date.now(),
-    };
+  // TODO: 백엔드에 Expense Entity 구현 후 활성화
+  // const addExpenseToPlace = async (planId: string, dayNumber: number, placeId: string, expense: Omit<Expense, 'id' | 'timestamp'>) => {
+  //   throw new Error('Expense feature is not implemented in backend yet');
+  // };
 
-    setTravelPlans((prev) =>
-      prev.map((plan) => {
-        if (plan.id !== planId) return plan;
-
-        return {
-          ...plan,
-          days: plan.days.map((day) => {
-            if (day.dayNumber !== dayNumber) return day;
-
-            return {
-              ...day,
-              places: day.places.map((place) => {
-                if (place.id !== placeId) return place;
-
-                return {
-                  ...place,
-                  expenses: [...(place.expenses || []), newExpense],
-                };
-              }),
-            };
-          }),
-        };
-      })
-    );
-  };
-
-  const deleteExpenseFromPlace = (planId: string, dayNumber: number, placeId: string, expenseId: string) => {
-    setTravelPlans((prev) =>
-      prev.map((plan) => {
-        if (plan.id !== planId) return plan;
-
-        return {
-          ...plan,
-          days: plan.days.map((day) => {
-            if (day.dayNumber !== dayNumber) return day;
-
-            return {
-              ...day,
-              places: day.places.map((place) => {
-                if (place.id !== placeId) return place;
-
-                return {
-                  ...place,
-                  expenses: (place.expenses || []).filter((expense) => expense.id !== expenseId),
-                };
-              }),
-            };
-          }),
-        };
-      })
-    );
-  };
+  // const deleteExpenseFromPlace = async (planId: string, dayNumber: number, placeId: string, expenseId: string) => {
+  //   throw new Error('Expense feature is not implemented in backend yet');
+  // };
 
   // Flight methods
   const getFlightsByPlan = (planId: string) => {
@@ -461,23 +1022,32 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
 
   const value: UserContextValue = {
     username,
+    authUser,
+    isAuthenticated: !!authUser,
     upcomingTrip,
     recentTrips: trips,
     popularTrips: trips,
     travelPlans,
     flights,
     accommodations,
+    isLoadingPlans,
+    setAuthUser,
+    logout,
+    loadTravelPlans,
     addTravelPlan,
     getTravelPlan,
     updateTravelPlan,
     addPlaceToDay,
+    getPlacesByDay,
     deletePlaceFromDay,
     reorderPlaces,
-    addPhotoToPlace,
-    deletePhotoFromPlace,
+    uploadPhotoToPlace,
+    getPhotosByPlace,
+    deletePhoto,
+    reorderPhotos,
     updatePlaceMemo,
-    addExpenseToPlace,
-    deleteExpenseFromPlace,
+    // addExpenseToPlace, // TODO: 백엔드 구현 후 활성화
+    // deleteExpenseFromPlace, // TODO: 백엔드 구현 후 활성화
     getFlightsByPlan,
     addFlight,
     updateFlight,
