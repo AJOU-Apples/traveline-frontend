@@ -1,18 +1,45 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, Alert } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { View, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, Alert, RefreshControl } from 'react-native';
 import { Text } from 'react-native-paper';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
-import { useUser } from '../src/context/UserContext';
+import { useUser, type Flight } from '../src/context/UserContext';
 import FlightCard from '../components/FlightCard';
 
 export default function FlightsScreen() {
     const { planId } = useLocalSearchParams<{ planId: string }>();
-    const { getFlightsByPlan, deleteFlight, toggleFlightSelection } = useUser();
+    const { getFlightsByPlan, deleteFlight, updateFlight } = useUser();
     const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
     const [showActionModal, setShowActionModal] = useState(false);
+    const [flights, setFlights] = useState<Flight[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
 
-    const flights = planId ? getFlightsByPlan(planId) : [];
+    const loadFlights = useCallback(async () => {
+        if (!planId) {
+            setFlights([]);
+            return;
+        }
+
+        try {
+            setIsLoading(true);
+            const fetchedFlights = await getFlightsByPlan(planId);
+            setFlights(fetchedFlights);
+        } catch (error) {
+            console.error('Failed to load flights:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [planId, getFlightsByPlan]);
+
+    useFocusEffect(
+        useCallback(() => {
+            loadFlights();
+        }, [loadFlights])
+    );
+
+    const handleRefresh = async () => {
+        await loadFlights();
+    };
 
     const handleBack = () => {
         router.back();
@@ -30,33 +57,59 @@ export default function FlightsScreen() {
         setShowActionModal(true);
     };
 
-    const handleToggleSelection = () => {
-        if (selectedFlightId) {
-            toggleFlightSelection(selectedFlightId);
+    const handleToggleSelection = async () => {
+        if (!selectedFlightId) {
+            return;
+        }
+
+        try {
+            const targetFlight = flights.find((flight) => flight.id === selectedFlightId);
+            if (!targetFlight) {
+                return;
+            }
+
+            await updateFlight(selectedFlightId, {
+                isSelected: !targetFlight.isSelected,
+            });
+
+            await loadFlights();
+        } catch (error) {
+            console.error('Failed to toggle flight selection:', error);
+            Alert.alert('오류', '선택 상태 변경에 실패했습니다.');
+        } finally {
             setShowActionModal(false);
             setSelectedFlightId(null);
         }
     };
 
     const handleDelete = () => {
-        if (selectedFlightId) {
-            setShowActionModal(false);
-            Alert.alert('삭제 확인', '항공편을 삭제하시겠습니까?', [
-                {
-                    text: '취소',
-                    style: 'cancel',
-                    onPress: () => setSelectedFlightId(null),
-                },
-                {
-                    text: '삭제',
-                    style: 'destructive',
-                    onPress: () => {
-                        deleteFlight(selectedFlightId);
-                        setSelectedFlightId(null);
-                    },
-                },
-            ]);
+        if (!selectedFlightId) {
+            return;
         }
+
+        setShowActionModal(false);
+        Alert.alert('삭제 확인', '항공편을 삭제하시겠습니까?', [
+            {
+                text: '취소',
+                style: 'cancel',
+                onPress: () => setSelectedFlightId(null),
+            },
+            {
+                text: '삭제',
+                style: 'destructive',
+                onPress: async () => {
+                    try {
+                        await deleteFlight(selectedFlightId);
+                        await loadFlights();
+                    } catch (error) {
+                        console.error('Failed to delete flight:', error);
+                        Alert.alert('오류', '항공편 삭제에 실패했습니다.');
+                    } finally {
+                        setSelectedFlightId(null);
+                    }
+                },
+            },
+        ]);
     };
 
     const selectedFlight = flights.find((f) => f.id === selectedFlightId);
@@ -72,7 +125,11 @@ export default function FlightsScreen() {
                 <Text style={styles.headerTitle}>항공편</Text>
             </View>
 
-            <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+            <ScrollView
+                style={styles.content}
+                showsVerticalScrollIndicator={false}
+                refreshControl={<RefreshControl refreshing={isLoading} onRefresh={handleRefresh} />}
+            >
                 {/* 항공편 추가 버튼 */}
                 <TouchableOpacity style={styles.addButton} onPress={handleAddFlight}>
                     <Feather name="plus" size={16} color="#000" />

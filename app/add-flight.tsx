@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform, Alert } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform, Alert, ActivityIndicator } from 'react-native';
 import { Text } from 'react-native-paper';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
@@ -30,7 +30,7 @@ export default function AddFlightScreen() {
         departureTime?: string;
         arrivalTime?: string;
     }>();
-    const { addFlight } = useUser();
+    const { createFlight } = useUser();
 
     const [formData, setFormData] = useState({
         departureDate: departureDate || '',
@@ -43,6 +43,7 @@ export default function AddFlightScreen() {
         departureTime: departureTime || '',
         arrivalTime: arrivalTime || '',
     });
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleBack = () => {
         router.back();
@@ -52,25 +53,24 @@ export default function AddFlightScreen() {
         setFormData((prev) => ({ ...prev, [key]: value }));
     };
 
-    const calculateDuration = (departure: string, arrival: string): string => {
-        if (!departure || !arrival) return '';
-
-        const [depHour, depMin] = departure.split(':').map(Number);
-        const [arrHour, arrMin] = arrival.split(':').map(Number);
-
-        const depMinutes = depHour * 60 + depMin;
-        const arrMinutes = arrHour * 60 + arrMin;
-
-        let diff = arrMinutes - depMinutes;
-        if (diff < 0) diff += 24 * 60; // 다음날 도착
-
-        const hours = Math.floor(diff / 60);
-        const minutes = diff % 60;
-
-        return `${hours}시간 ${minutes}분`;
+    const addDays = (date: string, days: number) => {
+        const [year, month, day] = date.split('-').map(Number);
+        if (!year || !month || !day) {
+            return date;
+        }
+        const newDate = new Date(year, month - 1, day);
+        newDate.setDate(newDate.getDate() + days);
+        const yyyy = newDate.getFullYear();
+        const mm = String(newDate.getMonth() + 1).padStart(2, '0');
+        const dd = String(newDate.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
     };
 
-    const handleAdd = () => {
+    const combineDateAndTime = (date: string, time: string) => {
+        return `${date}T${time}:00`;
+    };
+
+    const handleAdd = async () => {
         // 유효성 검사
         if (!formData.departureDate || !formData.airline || !formData.flightNumber) {
             Alert.alert('알림', '항공편명 정보를 입력해주세요.');
@@ -98,33 +98,43 @@ export default function AddFlightScreen() {
             return;
         }
 
-        // 항공편 추가
-        const duration = calculateDuration(formData.departureTime, formData.arrivalTime);
-        addFlight({
-            travelPlanId: planId,
-            airline: formData.airline,
-            flightNumber: formData.flightNumber,
-            departureDate: formData.departureDate,
-            departureTime: formData.departureTime,
-            arrivalTime: formData.arrivalTime,
-            departureAirport: formData.departureAirport,
-            departureAirportCode: formData.departureAirportCode || '',
-            arrivalAirport: formData.arrivalAirport,
-            arrivalAirportCode: formData.arrivalAirportCode || '',
-            duration: duration || undefined,
-            likes: 0,
-        });
+        try {
+            setIsSubmitting(true);
 
-        Alert.alert('추가 완료', '항공편이 추가되었습니다.', [
-            {
-                text: '확인',
-                onPress: () => {
-                    // 항공편 목록으로 돌아가기
-                    router.back();
-                    router.back();
+            // 항공편 날짜/시간 정규화
+            const departureDateTime = combineDateAndTime(formData.departureDate, formData.departureTime);
+            const arrivalDate =
+                formData.arrivalTime >= formData.departureTime
+                    ? formData.departureDate
+                    : addDays(formData.departureDate, 1);
+            const arrivalDateTime = combineDateAndTime(arrivalDate, formData.arrivalTime);
+
+            await createFlight(planId, {
+                airline: formData.airline,
+                flightNumber: formData.flightNumber,
+                departureAirport: formData.departureAirport,
+                departureAirportCode: formData.departureAirportCode || undefined,
+                departureTime: departureDateTime,
+                arrivalAirport: formData.arrivalAirport,
+                arrivalAirportCode: formData.arrivalAirportCode || undefined,
+                arrivalTime: arrivalDateTime,
+            });
+
+            Alert.alert('추가 완료', '항공편이 추가되었습니다.', [
+                {
+                    text: '확인',
+                    onPress: () => {
+                        router.back();
+                        router.back();
+                    },
                 },
-            },
-        ]);
+            ]);
+        } catch (error) {
+            console.error('Failed to create flight:', error);
+            Alert.alert('오류', '항공편을 등록하지 못했습니다. 잠시 후 다시 시도해주세요.');
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     return (
@@ -256,7 +266,8 @@ export default function AddFlightScreen() {
                             !formData.departureAirport ||
                             !formData.arrivalAirport ||
                             !formData.departureTime ||
-                            !formData.arrivalTime) &&
+                            !formData.arrivalTime ||
+                            isSubmitting) &&
                         styles.addButtonDisabled,
                     ]}
                     onPress={handleAdd}
@@ -267,10 +278,15 @@ export default function AddFlightScreen() {
                         !formData.departureAirport ||
                         !formData.arrivalAirport ||
                         !formData.departureTime ||
-                        !formData.arrivalTime
+                        !formData.arrivalTime ||
+                        isSubmitting
                     }
                 >
-                    <Text style={styles.addButtonText}>추가</Text>
+                    {isSubmitting ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                        <Text style={styles.addButtonText}>추가</Text>
+                    )}
                 </TouchableOpacity>
             </View>
         </View>

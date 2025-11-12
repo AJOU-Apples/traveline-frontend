@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform, Alert } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform, Alert, ActivityIndicator } from 'react-native';
 import { Text } from 'react-native-paper';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
@@ -15,7 +15,7 @@ export default function AddAccommodationScreen() {
         checkInDate?: string;
         checkOutDate?: string;
     }>();
-    const { addAccommodation } = useUser();
+    const { createAccommodation } = useUser();
 
     const [formData, setFormData] = useState({
         name: name || '',
@@ -25,6 +25,7 @@ export default function AddAccommodationScreen() {
         checkInDate: checkInDate || '',
         checkOutDate: checkOutDate || '',
     });
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleBack = () => {
         router.back();
@@ -53,7 +54,7 @@ export default function AddAccommodationScreen() {
         return `${checkIn.replace(/-/g, '.')} - ${checkOut.replace(/-/g, '.')}`;
     };
 
-    const handleRegister = () => {
+    const handleRegister = async () => {
         // 유효성 검사
         if (!formData.name.trim()) {
             Alert.alert('알림', '숙소 이름을 입력해주세요.');
@@ -73,28 +74,32 @@ export default function AddAccommodationScreen() {
             return;
         }
 
-        // 숙소 추가
-        addAccommodation({
-            travelPlanId: planId,
-            name: formData.name,
-            address: formData.address,
-            latitude: formData.latitude,
-            longitude: formData.longitude,
-            checkInDate: formData.checkInDate,
-            checkOutDate: formData.checkOutDate,
-            likes: 0,
-        });
+        try {
+            setIsSubmitting(true);
+            await createAccommodation(planId, {
+                name: formData.name,
+                address: formData.address,
+                latitude: formData.latitude,
+                longitude: formData.longitude,
+                checkInDate: formData.checkInDate,
+                checkOutDate: formData.checkOutDate,
+            });
 
-        Alert.alert('등록 완료', '숙소가 등록되었습니다.', [
-            {
-                text: '확인',
-                onPress: () => {
-                    // 숙소 목록으로 돌아가기
-                    router.back();
-                    router.back();
+            Alert.alert('등록 완료', '숙소가 등록되었습니다.', [
+                {
+                    text: '확인',
+                    onPress: () => {
+                        router.back();
+                        router.back();
+                    },
                 },
-            },
-        ]);
+            ]);
+        } catch (error) {
+            console.error('Failed to create accommodation:', error);
+            Alert.alert('오류', '숙소 등록에 실패했습니다. 잠시 후 다시 시도해주세요.');
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     return (
@@ -169,13 +174,27 @@ export default function AddAccommodationScreen() {
                 <TouchableOpacity
                     style={[
                         styles.registerButton,
-                        (!formData.name || !formData.address || !formData.checkInDate || !formData.checkOutDate) &&
+                        (!formData.name ||
+                            !formData.address ||
+                            !formData.checkInDate ||
+                            !formData.checkOutDate ||
+                            isSubmitting) &&
                             styles.registerButtonDisabled,
                     ]}
                     onPress={handleRegister}
-                    disabled={!formData.name || !formData.address || !formData.checkInDate || !formData.checkOutDate}
+                    disabled={
+                        !formData.name ||
+                        !formData.address ||
+                        !formData.checkInDate ||
+                        !formData.checkOutDate ||
+                        isSubmitting
+                    }
                 >
-                    <Text style={styles.registerButtonText}>등록</Text>
+                    {isSubmitting ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                        <Text style={styles.registerButtonText}>등록</Text>
+                    )}
                 </TouchableOpacity>
             </View>
         </View>

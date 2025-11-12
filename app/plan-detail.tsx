@@ -7,7 +7,8 @@ import {
     Platform,
     Dimensions,
     Animated,
-    PanResponder
+    PanResponder,
+    type ViewStyle
 } from 'react-native';
 import { Text } from 'react-native-paper';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
@@ -17,7 +18,7 @@ import Constants from 'expo-constants';
 import { useUser } from '../src/context/UserContext';
 import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import type { Place } from '../src/context/UserContext';
+import type { Place, Flight, Accommodation } from '../src/context/UserContext';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -142,10 +143,12 @@ const GOOGLE_MAPS_API_KEY = Platform.select({
 
 export default function PlanDetailScreen() {
     const { planId } = useLocalSearchParams<{ planId: string }>();
-    const { getTravelPlan, reorderPlaces, getFlightsByPlan, getAccommodationsByPlan, getPlacesByDay, getExpensesByPlace } = useUser();
+    const { getTravelPlan, reorderPlaces, getPlacesByDay, getExpensesByPlace, getFlightsByPlan, getAccommodationsByPlan } = useUser();
     const [selectedDay, setSelectedDay] = useState(1);
     const [isEditMode, setIsEditMode] = useState(false);
     const [isLoadingPlaces, setIsLoadingPlaces] = useState(false);
+    const [flights, setFlights] = useState<Flight[]>([]);
+    const [accommodations, setAccommodations] = useState<Accommodation[]>([]);
 
     // 중복 로딩 방지를 위한 ref
     const isLoadingPlacesRef = useRef(false);
@@ -153,13 +156,36 @@ export default function PlanDetailScreen() {
     // 저장된 여행 데이터 불러오기
     const tripData = getTravelPlan(planId || '');
 
-    // 항공편과 숙소 데이터 불러오기
-    const flights = planId ? getFlightsByPlan(planId) : [];
-    const accommodations = planId ? getAccommodationsByPlan(planId) : [];
+    // 항공편/숙소 데이터 로드
+    const loadFlightsAndAccommodations = useCallback(async () => {
+        if (!planId) {
+            return;
+        }
 
-    // 선택된 항공편과 숙소 찾기 (배열로 가져오기)
-    const selectedFlights = flights.filter(f => f.isSelected);
-    const selectedAccommodations = accommodations.filter(a => a.isSelected);
+        try {
+            const [fetchedFlights, fetchedAccommodations] = await Promise.all([
+                getFlightsByPlan(planId),
+                getAccommodationsByPlan(planId),
+            ]);
+
+            setFlights(fetchedFlights);
+            setAccommodations(fetchedAccommodations);
+        } catch (error) {
+            console.error('Failed to load flights/accommodations:', error);
+        }
+    }, [planId, getFlightsByPlan, getAccommodationsByPlan]);
+
+    useFocusEffect(
+        useCallback(() => {
+            loadFlightsAndAccommodations();
+        }, [loadFlightsAndAccommodations])
+    );
+
+    const selectedFlights = useMemo(() => flights.filter((flight) => flight.isSelected), [flights]);
+    const selectedAccommodations = useMemo(
+        () => accommodations.filter((accommodation) => accommodation.isSelected),
+        [accommodations]
+    );
 
     // 목적지에 따른 통화 기호 반환
     const getCurrencySymbol = () => {
@@ -325,6 +351,115 @@ export default function PlanDetailScreen() {
     const markers = useMemo(() => {
         return currentDayData?.places || [];
     }, [currentDayData]);
+
+    const extractDateFromValue = useCallback((value?: string) => {
+        if (!value) return undefined;
+        if (value.includes('T')) {
+            return value.split('T')[0];
+        }
+        if (value.includes('.')) {
+            return value.replace(/\./g, '-');
+        }
+        return value;
+    }, []);
+
+    const extractComparableTimestamp = useCallback((flight: Flight, date: string) => {
+        const departureDate = extractDateFromValue(flight.departureDate ?? flight.departureTime);
+        if (departureDate === date && flight.departureTime) {
+            const departure = new Date(flight.departureTime);
+            if (!Number.isNaN(departure.getTime())) {
+                return departure.getTime();
+            }
+        }
+
+        const arrivalDate = extractDateFromValue(flight.arrivalDate ?? flight.arrivalTime);
+        if (arrivalDate === date && flight.arrivalTime) {
+            const arrival = new Date(flight.arrivalTime);
+            if (!Number.isNaN(arrival.getTime())) {
+                return arrival.getTime();
+            }
+        }
+
+        if (flight.departureTime) {
+            const departure = new Date(flight.departureTime);
+            if (!Number.isNaN(departure.getTime())) {
+                return departure.getTime();
+            }
+        }
+
+        if (flight.arrivalTime) {
+            const arrival = new Date(flight.arrivalTime);
+            if (!Number.isNaN(arrival.getTime())) {
+                return arrival.getTime();
+            }
+        }
+
+        return 0;
+    }, [extractDateFromValue]);
+
+    const firstDayNumber = tripData.days[0]?.dayNumber;
+    const lastDayNumber = tripData.days[tripData.days.length - 1]?.dayNumber;
+    const isFirstDay = currentDayData?.dayNumber === firstDayNumber;
+    const isLastDay = currentDayData?.dayNumber === lastDayNumber;
+
+    const flightsForCurrentDay = useMemo(() => {
+        if (!currentDayData?.date) {
+            return [];
+        }
+
+        return flights
+            .filter((flight) => {
+                const departureDate = extractDateFromValue(flight.departureDate ?? flight.departureTime);
+                const arrivalDate = extractDateFromValue(flight.arrivalDate ?? flight.arrivalTime);
+                return departureDate === currentDayData.date || arrivalDate === currentDayData.date;
+            })
+            .sort((a, b) => {
+                const aTime = extractComparableTimestamp(a, currentDayData.date!);
+                const bTime = extractComparableTimestamp(b, currentDayData.date!);
+                return aTime - bTime;
+            });
+    }, [currentDayData?.date, extractComparableTimestamp, extractDateFromValue, flights]);
+
+    const flightsForDisplay = useMemo(() => (isEditMode ? [] : flightsForCurrentDay), [flightsForCurrentDay, isEditMode]);
+
+    const flightsTop = useMemo(() => {
+        if (flightsForDisplay.length === 0) {
+            return [];
+        }
+
+        if (isLastDay && !isFirstDay) {
+            return [];
+        }
+
+        return flightsForDisplay;
+    }, [flightsForDisplay, isFirstDay, isLastDay]);
+
+    const flightsBottom = useMemo(() => {
+        if (!isLastDay || isFirstDay || flightsForDisplay.length === 0) {
+            return [];
+        }
+        return flightsForDisplay;
+    }, [flightsForDisplay, isFirstDay, isLastDay]);
+
+    const hasFlights = flightsForDisplay.length > 0;
+
+    const formatTimeFromValue = useCallback((value?: string) => {
+        if (!value) return undefined;
+        if (value.includes('T')) {
+            return value.split('T')[1].slice(0, 5);
+        }
+        if (value.length >= 5) {
+            return value.slice(0, 5);
+        }
+        return value;
+    }, []);
+
+    const formatAirportDisplay = useCallback((name?: string, code?: string) => {
+        if (name && code) return `${name}(${code})`;
+        if (name) return name;
+        if (code) return code;
+        return '';
+    }, []);
 
     // 실제 경로 가져오기
     useEffect(() => {
@@ -572,6 +707,140 @@ export default function PlanDetailScreen() {
         );
     };
 
+    const renderFlightScheduleCard = (
+        flight: Flight,
+        placement: 'top' | 'bottom',
+        index: number,
+        total: number
+    ) => {
+        const departureTimeLabel = formatTimeFromValue(flight.departureTime);
+        const arrivalTimeLabel = formatTimeFromValue(flight.arrivalTime);
+        const departureAirportLabel = formatAirportDisplay(flight.departureAirport, flight.departureAirportCode);
+        const arrivalAirportLabel = formatAirportDisplay(flight.arrivalAirport, flight.arrivalAirportCode);
+
+        const cardLabel = (() => {
+            if (placement === 'top' && isFirstDay) return '출발';
+            if (placement === 'bottom' && isLastDay) return '귀국';
+
+            const dayDate = currentDayData?.date;
+            if (dayDate) {
+                const departureDate = extractDateFromValue(flight.departureDate ?? flight.departureTime);
+                const arrivalDate = extractDateFromValue(flight.arrivalDate ?? flight.arrivalTime);
+
+                if (departureDate === dayDate && arrivalDate === dayDate) {
+                    return '이동';
+                }
+
+                if (departureDate === dayDate) {
+                    return '출발';
+                }
+
+                if (arrivalDate === dayDate) {
+                    return '도착';
+                }
+            }
+
+            return '항공편';
+        })();
+
+        const flightNumberDisplay = [flight.airline, flight.flightNumber].filter(Boolean).join(' ') || '항공편';
+        const departureDate = extractDateFromValue(flight.departureDate ?? flight.departureTime);
+        const arrivalDate = extractDateFromValue(flight.arrivalDate ?? flight.arrivalTime);
+        const formattedDepartureDate = departureDate?.replace(/-/g, '.') ?? '';
+        const formattedArrivalDate = arrivalDate?.replace(/-/g, '.') ?? '';
+        const scheduleLabel =
+            formattedDepartureDate && formattedArrivalDate
+                ? formattedDepartureDate === formattedArrivalDate
+                    ? formattedDepartureDate
+                    : `${formattedDepartureDate} ~ ${formattedArrivalDate}`
+                : formattedDepartureDate || formattedArrivalDate || currentDayData?.displayDate || '';
+
+        const durationLabel = (() => {
+            if (flight.duration) return flight.duration;
+            if (!flight.departureTime || !flight.arrivalTime) return undefined;
+
+            const departure = new Date(flight.departureTime);
+            const arrival = new Date(flight.arrivalTime);
+
+            if (Number.isNaN(departure.getTime()) || Number.isNaN(arrival.getTime())) {
+                return undefined;
+            }
+
+            let diffMinutes = Math.round((arrival.getTime() - departure.getTime()) / 60000);
+            if (diffMinutes < 0) {
+                diffMinutes = 0;
+            }
+
+            const hours = Math.floor(diffMinutes / 60);
+            const minutes = diffMinutes % 60;
+
+            if (hours > 0 && minutes > 0) return `${hours}시간 ${minutes}분`;
+            if (hours > 0) return `${hours}시간`;
+            return `${minutes}분`;
+        })();
+
+        const timeRangeLabel =
+            departureTimeLabel || arrivalTimeLabel
+                ? [departureTimeLabel, arrivalTimeLabel].filter(Boolean).join(' - ')
+                : undefined;
+        const timeRangeWithDuration =
+            timeRangeLabel && durationLabel ? `${timeRangeLabel} (${durationLabel} 소요)` : timeRangeLabel;
+
+        const connectionLineStyles: ViewStyle[] = [styles.connectionLineContainer];
+        if (
+            placement === 'bottom' &&
+            (index === total - 1 || (currentDayData?.places?.length ?? 0) === 0)
+        ) {
+            connectionLineStyles.push(styles.lastConnectionLine);
+        }
+        if (
+            placement === 'top' &&
+            total === 1 &&
+            (currentDayData?.places?.length ?? 0) === 0 &&
+            flightsBottom.length === 0
+        ) {
+            connectionLineStyles.push(styles.lastConnectionLine);
+        }
+
+        return (
+            <View style={styles.placeCardContainer}>
+                <View style={styles.placeLeftSection}>
+                    <View style={[styles.placeNumber, styles.flightPlaceNumber]}>
+                        <MaterialIcons name="flight" size={14} color="#fff" />
+                    </View>
+                    <View style={connectionLineStyles}>
+                        <View style={styles.connectionLine} />
+                        <View style={[styles.distanceBadge, styles.hiddenDistanceBadge]}>
+                            <Text style={styles.distanceText}>{' '}</Text>
+                        </View>
+                    </View>
+                </View>
+                <View style={[styles.placeCard, styles.flightPlaceCard]}>
+                    <View style={styles.placeCardInner}>
+                        <View style={styles.placeMainInfo}>
+                            <Text style={styles.placeName}>{flightNumberDisplay}</Text>
+                            <Text style={styles.placeAddress} numberOfLines={1}>
+                                {departureAirportLabel} → {arrivalAirportLabel}
+                            </Text>
+                            {timeRangeWithDuration ? (
+                                <Text style={styles.placeTimeInCard}>{timeRangeWithDuration}</Text>
+                            ) : null}
+                        </View>
+                        <View style={styles.placeBottomInfo}>
+                            <View style={styles.placeLikeSection}>
+                                <MaterialIcons name="flight" size={12} color="#088CDA" />
+                                <Text style={[styles.placeLikeText, styles.flightLabelText]}>{cardLabel}</Text>
+                            </View>
+                            <Text style={[styles.placeExpense, styles.flightScheduleMeta]}>
+                                {scheduleLabel}
+                            </Text>
+                        </View>
+                    </View>
+                </View>
+            </View>
+        );
+    };
+
     return (
         <GestureHandlerRootView style={styles.container}>
             {/* 상단 헤더 */}
@@ -754,46 +1023,50 @@ export default function PlanDetailScreen() {
 
                 {/* 일정 내용 */}
                 <View style={styles.scheduleContentContainer}>
-                    {currentDayData?.places.length === 0 ? (
-                        <ScrollView
-                            style={styles.scheduleContent}
-                            showsVerticalScrollIndicator={false}
-                        >
-                            <View style={styles.emptyPlaces}>
-                                <Text style={styles.emptyPlacesText}>아직 추가된 장소가 없습니다</Text>
+                    <DraggableFlatList
+                        data={currentDayData?.places || []}
+                        renderItem={renderPlaceItem}
+                        keyExtractor={(item) => item.id}
+                        onDragEnd={({ data, from, to }) => {
+                            if (from !== to && planId) {
+                                const placeIds = data.map(place => place.id);
+                                reorderPlaces(planId, selectedDay, placeIds);
+                            }
+                        }}
+                        activationDistance={isEditMode ? 10 : 999999}
+                        containerStyle={styles.draggableList}
+                        contentContainerStyle={styles.draggableListContent}
+                        showsVerticalScrollIndicator={false}
+                        ListHeaderComponent={() => (
+                            <>
+                                {flightsTop.map((flight, index) => (
+                                    <React.Fragment key={`flight-${flight.id}-top-${index}`}>
+                                        {renderFlightScheduleCard(flight, 'top', index, flightsTop.length)}
+                                    </React.Fragment>
+                                ))}
+                                {!(currentDayData?.places?.length || hasFlights) && (
+                                    <View style={styles.emptyPlaces}>
+                                        <Text style={styles.emptyPlacesText}>아직 추가된 장소가 없습니다</Text>
+                                    </View>
+                                )}
+                            </>
+                        )}
+                        ListFooterComponent={() => (
+                            <View>
+                                {flightsBottom.map((flight, index) => (
+                                    <React.Fragment key={`flight-${flight.id}-bottom-${index}`}>
+                                        {renderFlightScheduleCard(flight, 'bottom', index, flightsBottom.length)}
+                                    </React.Fragment>
+                                ))}
+                                <View style={styles.addPlaceButtonContainer}>
+                                    <TouchableOpacity style={styles.addPlaceButton} onPress={handleAddPlace}>
+                                        <Feather name="plus" size={12} color="#fff" />
+                                        <Text style={styles.addPlaceText}>장소 추가</Text>
+                                    </TouchableOpacity>
+                                </View>
                             </View>
-                            {/* 장소 추가 버튼 */}
-                            <TouchableOpacity style={styles.addPlaceButton} onPress={handleAddPlace}>
-                                <Feather name="plus" size={12} color="#fff" />
-                                <Text style={styles.addPlaceText}>장소 추가</Text>
-                            </TouchableOpacity>
-                        </ScrollView>
-                    ) : (
-                        <>
-                            <DraggableFlatList
-                                data={currentDayData?.places || []}
-                                renderItem={renderPlaceItem}
-                                keyExtractor={(item) => item.id}
-                                onDragEnd={({ data, from, to }) => {
-                                    if (from !== to && planId) {
-                                        // data는 재정렬된 places 배열
-                                        const placeIds = data.map(place => place.id);
-                                        reorderPlaces(planId, selectedDay, placeIds);
-                                    }
-                                }}
-                                activationDistance={isEditMode ? 10 : 999999}
-                                containerStyle={styles.draggableList}
-                                contentContainerStyle={styles.draggableListContent}
-                            />
-                            {/* 장소 추가 버튼 */}
-                            <View style={styles.addPlaceButtonContainer}>
-                                <TouchableOpacity style={styles.addPlaceButton} onPress={handleAddPlace}>
-                                    <Feather name="plus" size={12} color="#fff" />
-                                    <Text style={styles.addPlaceText}>장소 추가</Text>
-                                </TouchableOpacity>
-                            </View>
-                        </>
-                    )}
+                        )}
+                    />
                 </View>
             </Animated.View>
 
@@ -1085,6 +1358,23 @@ const styles = StyleSheet.create({
     emptyPlacesText: {
         fontSize: 14,
         color: '#9E9E9E',
+    },
+    flightPlaceCard: {
+        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+        borderWidth: 0,
+        borderColor: 'transparent',
+    },
+    flightPlaceNumber: {
+        backgroundColor: '#088CDA',
+    },
+    hiddenDistanceBadge: {
+        opacity: 0,
+    },
+    flightLabelText: {
+        color: '#585858',
+    },
+    flightScheduleMeta: {
+        color: '#585858',
     },
     placesList: {
         marginTop: 0,

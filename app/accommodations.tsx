@@ -1,18 +1,46 @@
-import React, {useState} from 'react';
-import {View, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, Alert} from 'react-native';
+import React, {useCallback, useState} from 'react';
+import {View, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, Alert, RefreshControl} from 'react-native';
 import {Text} from 'react-native-paper';
-import {router, useLocalSearchParams} from 'expo-router';
+import {router, useFocusEffect, useLocalSearchParams} from 'expo-router';
 import {Feather} from '@expo/vector-icons';
-import {useUser} from '../src/context/UserContext';
+import {useUser, type Accommodation} from '../src/context/UserContext';
 import AccommodationCard from '../components/AccommodationCard';
 
 export default function AccommodationsScreen() {
     const {planId} = useLocalSearchParams<{ planId: string }>();
-    const {getAccommodationsByPlan, deleteAccommodation, toggleAccommodationSelection} = useUser();
+    const {getAccommodationsByPlan, deleteAccommodation, updateAccommodation} = useUser();
     const [selectedAccommodationId, setSelectedAccommodationId] = useState<string | null>(null);
     const [showActionModal, setShowActionModal] = useState(false);
+    const [accommodations, setAccommodations] = useState<Accommodation[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
 
-    const accommodations = planId ? getAccommodationsByPlan(planId) : [];
+    const loadAccommodations = useCallback(async () => {
+        if (!planId) {
+            setAccommodations([]);
+            return;
+        }
+
+        try {
+            setIsLoading(true);
+            const fetched = await getAccommodationsByPlan(planId);
+            setAccommodations(fetched);
+        } catch (error) {
+            console.error('Failed to load accommodations:', error);
+            Alert.alert('오류', '숙소 정보를 불러오지 못했습니다.');
+        } finally {
+            setIsLoading(false);
+        }
+    }, [getAccommodationsByPlan, planId]);
+
+    useFocusEffect(
+        useCallback(() => {
+            loadAccommodations();
+        }, [loadAccommodations]),
+    );
+
+    const handleRefresh = async () => {
+        await loadAccommodations();
+    };
 
     const handleBack = () => {
         router.back();
@@ -30,33 +58,58 @@ export default function AccommodationsScreen() {
         setShowActionModal(true);
     };
 
-    const handleToggleSelection = () => {
-        if (selectedAccommodationId) {
-            toggleAccommodationSelection(selectedAccommodationId);
+    const handleToggleSelection = async () => {
+        if (!selectedAccommodationId) {
+            return;
+        }
+
+        try {
+            const target = accommodations.find((accommodation) => accommodation.id === selectedAccommodationId);
+            if (!target) {
+                return;
+            }
+
+            await updateAccommodation(selectedAccommodationId, {
+                isSelected: !target.isSelected,
+            });
+            await loadAccommodations();
+        } catch (error) {
+            console.error('Failed to toggle accommodation selection:', error);
+            Alert.alert('오류', '선택 상태 변경에 실패했습니다.');
+        } finally {
             setShowActionModal(false);
             setSelectedAccommodationId(null);
         }
     };
 
     const handleDelete = () => {
-        if (selectedAccommodationId) {
-            setShowActionModal(false);
-            Alert.alert('삭제 확인', '숙소를 삭제하시겠습니까?', [
-                {
-                    text: '취소',
-                    style: 'cancel',
-                    onPress: () => setSelectedAccommodationId(null),
-                },
-                {
-                    text: '삭제',
-                    style: 'destructive',
-                    onPress: () => {
-                        deleteAccommodation(selectedAccommodationId);
-                        setSelectedAccommodationId(null);
-                    },
-                },
-            ]);
+        if (!selectedAccommodationId) {
+            return;
         }
+
+        setShowActionModal(false);
+        Alert.alert('삭제 확인', '숙소를 삭제하시겠습니까?', [
+            {
+                text: '취소',
+                style: 'cancel',
+                onPress: () => setSelectedAccommodationId(null),
+            },
+            {
+                text: '삭제',
+                style: 'destructive',
+                onPress: async () => {
+                    try {
+                        await deleteAccommodation(selectedAccommodationId);
+                        await loadAccommodations();
+                    } catch (error) {
+                        console.error('Failed to delete accommodation:', error);
+                        Alert.alert('오류', '숙소 삭제에 실패했습니다.');
+                    } finally {
+                        setSelectedAccommodationId(null);
+                    }
+                },
+            },
+        ]);
     };
 
     const selectedAccommodation = accommodations.find((a) => a.id === selectedAccommodationId);
@@ -72,7 +125,11 @@ export default function AccommodationsScreen() {
                 <Text style={styles.headerTitle}>숙소</Text>
             </View>
 
-            <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+            <ScrollView
+                style={styles.content}
+                showsVerticalScrollIndicator={false}
+                refreshControl={<RefreshControl refreshing={isLoading} onRefresh={handleRefresh} />}
+            >
                 {/* 숙소 추가 버튼 */}
                 <TouchableOpacity style={styles.addButton} onPress={handleAddAccommodation}>
                     <Feather name="plus" size={16} color="#000"/>

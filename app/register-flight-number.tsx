@@ -1,28 +1,56 @@
-import React, {useState} from 'react';
+import React, {useMemo, useState} from 'react';
 import {View, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform, Alert, Modal, ActivityIndicator} from 'react-native';
 import {Text} from 'react-native-paper';
 import {router, useLocalSearchParams} from 'expo-router';
 import {Feather} from '@expo/vector-icons';
 import {Calendar, DateData} from 'react-native-calendars';
 import {getFlightStatus} from '../src/utils/amadeusApi';
+import {useUser} from '../src/context/UserContext';
 
 export default function RegisterFlightNumberScreen() {
     const {planId} = useLocalSearchParams<{ planId: string }>();
+    const {getTravelPlan} = useUser();
+    const travelPlan = planId ? getTravelPlan(planId) : undefined;
     const [departureDate, setDepartureDate] = useState('');
     const [airline, setAirline] = useState('');
     const [flightNumber, setFlightNumber] = useState('');
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+    const {minSelectableDate, maxSelectableDate} = useMemo(() => {
+        if (!travelPlan?.days?.length) {
+            return {minSelectableDate: undefined, maxSelectableDate: undefined};
+        }
+
+        const sortedDays = [...travelPlan.days].sort((a, b) => a.dayNumber - b.dayNumber);
+        return {
+            minSelectableDate: sortedDays[0]?.date,
+            maxSelectableDate: sortedDays[sortedDays.length - 1]?.date,
+        };
+    }, [travelPlan]);
+    const calendarInitialDate = useMemo(
+        () => departureDate || minSelectableDate || new Date().toISOString().split('T')[0],
+        [departureDate, minSelectableDate],
+    );
 
     const handleBack = () => {
         router.back();
     };
 
     const handleDateSelect = () => {
+        if (!minSelectableDate || !maxSelectableDate) {
+            Alert.alert('알림', '여행 기간 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.');
+            return;
+        }
         setShowDatePicker(true);
     };
 
     const handleDayPress = (day: DateData) => {
+        if (
+            (minSelectableDate && day.dateString < minSelectableDate) ||
+            (maxSelectableDate && day.dateString > maxSelectableDate)
+        ) {
+            return;
+        }
         setDepartureDate(day.dateString);
         setShowDatePicker(false);
     };
@@ -209,8 +237,10 @@ export default function RegisterFlightNumberScreen() {
                             </TouchableOpacity>
                         </View>
                         <Calendar
-                            current={new Date().toISOString().split('T')[0]}
-                            minDate={new Date().toISOString().split('T')[0]}
+                            current={calendarInitialDate}
+                            minDate={minSelectableDate}
+                            maxDate={maxSelectableDate}
+                            disableAllTouchEventsForDisabledDays
                             onDayPress={handleDayPress}
                             markedDates={
                                 departureDate

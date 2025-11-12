@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useState, PropsWithChildren, useEffect, useCallback } from 'react';
 import { AppState, AppStateStatus, Alert } from 'react-native';
 import { authApi } from '../utils/authApi';
-import { travelPlanApi, TravelPlanDto } from '../utils/travelPlanApi';
+import { travelPlanApi, TravelPlanDto, type FlightSearchRequest, type FlightSearchResponse } from '../utils/travelPlanApi';
 
 export type Trip = {
   id: string;
@@ -125,38 +125,58 @@ export type TravelDay = {
 export type Flight = {
   id: string;
   travelPlanId: string;
-  airline: string; // 항공사 코드 (KE, OZ 등)
-  flightNumber: string; // 편명
-  departureDate: string; // YYYY-MM-DD
-  departureTime: string; // HH:MM
-  arrivalTime: string; // HH:MM
-  departureAirport: string; // 인천 국제 공항
-  departureAirportCode: string; // ICN
-  arrivalAirport: string; // 나리타 국제 공항
-  arrivalAirportCode: string; // NRT
-  duration?: string; // 2시간 30분 소요
-  bookingReference?: string; // 예약 번호
-  likes?: number; // 좋아요 수
+  airline: string;
+  flightNumber: string;
+  departureAirport: string;
+  departureAirportCode?: string;
+  departureTime: string; // ISO DateTime
+  arrivalAirport: string;
+  arrivalAirportCode?: string;
+  arrivalTime: string; // ISO DateTime
+  departureDate?: string;
+  arrivalDate?: string;
+  duration?: string;
+  likes?: number;
+  confirmationNumber?: string;
+  seatNumber?: string;
+  price?: number;
+  currency?: string;
+  isConfirmed?: boolean;
   isSelected?: boolean; // 선택 여부
+  cabinClass?: string;
+  passengerName?: string;
+  bookingUrl?: string;
+  memo?: string;
+  createdBy?: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type Accommodation = {
   id: string;
   travelPlanId: string;
-  name: string; // 숙소명
-  address: string; // 주소
+  name: string;
+  address?: string;
   latitude?: number;
   longitude?: number;
+  placeId?: string;
   checkInDate: string; // YYYY-MM-DD
+  checkInTime?: string;
   checkOutDate: string; // YYYY-MM-DD
-  checkInTime?: string; // HH:MM
-  checkOutTime?: string; // HH:MM
-  bookingReference?: string; // 예약 확인 번호
-  phoneNumber?: string;
-  website?: string;
-  memo?: string;
-  likes?: number; // 좋아요 수
+  checkOutTime?: string;
+  confirmationNumber?: string;
+  price?: number;
+  currency?: string;
+  isConfirmed?: boolean;
   isSelected?: boolean; // 선택 여부
+  likes?: number;
+  phoneNumber?: string;
+  email?: string;
+  bookingUrl?: string;
+  memo?: string;
+  createdBy?: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type TravelPlan = {
@@ -249,8 +269,6 @@ type UserContextValue = {
   recentTrips: Trip[];
   popularTrips: Trip[];
   travelPlans: TravelPlan[];
-  flights: Flight[];
-  accommodations: Accommodation[];
   isLoadingPlans: boolean;
   // Auth methods
   setAuthUser: (user: AuthUser | null) => void;
@@ -300,18 +318,18 @@ type UserContextValue = {
   getMemosByPlace: (placeId: string) => Promise<Memo[]>;
   updateMemo: (memoId: string, content: string) => Promise<Memo>;
   deleteMemo: (memoId: string) => Promise<void>;
+  // Flight search (Amadeus)
+  searchFlight: (request: FlightSearchRequest) => Promise<FlightSearchResponse>;
   // Flight methods
-  getFlightsByPlan: (planId: string) => Flight[];
-  addFlight: (flight: Omit<Flight, 'id'>) => string;
-  updateFlight: (id: string, flight: Partial<Flight>) => void;
-  deleteFlight: (id: string) => void;
-  toggleFlightSelection: (id: string) => void;
+  getFlightsByPlan: (planId: string) => Promise<Flight[]>;
+  createFlight: (planId: string, flight: Omit<Flight, 'id' | 'travelPlanId' | 'createdAt' | 'updatedAt'>) => Promise<Flight>;
+  updateFlight: (flightId: string, updates: Partial<Flight>) => Promise<Flight>;
+  deleteFlight: (flightId: string) => Promise<void>;
   // Accommodation methods
-  getAccommodationsByPlan: (planId: string) => Accommodation[];
-  addAccommodation: (accommodation: Omit<Accommodation, 'id'>) => string;
-  updateAccommodation: (id: string, accommodation: Partial<Accommodation>) => void;
-  deleteAccommodation: (id: string) => void;
-  toggleAccommodationSelection: (id: string) => void;
+  getAccommodationsByPlan: (planId: string) => Promise<Accommodation[]>;
+  createAccommodation: (planId: string, accommodation: Omit<Accommodation, 'id' | 'travelPlanId' | 'createdAt' | 'updatedAt'>) => Promise<Accommodation>;
+  updateAccommodation: (accommodationId: string, updates: Partial<Accommodation>) => Promise<Accommodation>;
+  deleteAccommodation: (accommodationId: string) => Promise<void>;
 };
 
 const defaultTrips: Trip[] = [
@@ -339,8 +357,6 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [trips] = useState<Trip[]>(defaultTrips);
   const [travelPlans, setTravelPlans] = useState<TravelPlan[]>([]);
-  const [flights, setFlights] = useState<Flight[]>([]);
-  const [accommodations, setAccommodations] = useState<Accommodation[]>([]);
   const [isLoadingPlans, setIsLoadingPlans] = useState(false);
 
   // username: 로그인 상태면 name (이름), 게스트면 "익명의 여행객"
@@ -363,8 +379,6 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
         await authApi.logout();
         setAuthUser(null);
         setTravelPlans([]);
-        setFlights([]);
-        setAccommodations([]);
 
         // 사용자에게 알림
         Alert.alert(
@@ -457,8 +471,6 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
       await authApi.logout();
       setAuthUser(null);
       setTravelPlans([]);
-      setFlights([]);
-      setAccommodations([]);
     } catch (error) {
       console.error('Logout failed:', error);
       throw error;
@@ -1427,68 +1439,354 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     }
   };
 
+  // Flight search (Amadeus)
+  const searchFlight = async (request: FlightSearchRequest): Promise<FlightSearchResponse> => {
+    try {
+      return await travelPlanApi.searchFlight(request);
+    } catch (error) {
+      console.error('Failed to search flight:', error);
+      throw error;
+    }
+  };
+
   // Flight methods
-  const getFlightsByPlan = (planId: string) => {
-    return flights.filter((flight) => flight.travelPlanId === planId);
+  const getFlightsByPlan = async (planId: string): Promise<Flight[]> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const flights = await travelPlanApi.getFlightsByTravelPlan(parseInt(planId));
+
+      return flights.map((flight) => ({
+        id: flight.id.toString(),
+        travelPlanId: flight.travelPlanId.toString(),
+        airline: flight.airline,
+        flightNumber: flight.flightNumber,
+        departureAirport: flight.departureAirport,
+        departureAirportCode: flight.departureAirportCode,
+        departureTime: flight.departureTime,
+        arrivalAirport: flight.arrivalAirport,
+        arrivalAirportCode: flight.arrivalAirportCode,
+        arrivalTime: flight.arrivalTime,
+        confirmationNumber: flight.confirmationNumber,
+        seatNumber: flight.seatNumber,
+        price: flight.price,
+        currency: flight.currency,
+        isConfirmed: flight.isConfirmed,
+        isSelected: flight.isSelected,
+        cabinClass: flight.cabinClass,
+        passengerName: flight.passengerName,
+        bookingUrl: flight.bookingUrl,
+        memo: flight.memo,
+        createdBy: flight.createdBy,
+        createdAt: flight.createdAt,
+        updatedAt: flight.updatedAt,
+      }));
+    } catch (error) {
+      console.error('Failed to get flights:', error);
+      throw error;
+    }
   };
 
-  const addFlight = (flight: Omit<Flight, 'id'>) => {
-    const id = `flight_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const newFlight: Flight = {
-      ...flight,
-      id,
-    };
-    setFlights((prev) => [...prev, newFlight]);
-    return id;
+  const createFlight = async (planId: string, flight: Omit<Flight, 'id' | 'travelPlanId' | 'createdAt' | 'updatedAt'>): Promise<Flight> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const createdFlight = await travelPlanApi.createFlight({
+        travelPlanId: parseInt(planId),
+        airline: flight.airline,
+        flightNumber: flight.flightNumber,
+        departureAirport: flight.departureAirport,
+        departureAirportCode: flight.departureAirportCode,
+        departureTime: flight.departureTime,
+        arrivalAirport: flight.arrivalAirport,
+        arrivalAirportCode: flight.arrivalAirportCode,
+        arrivalTime: flight.arrivalTime,
+        confirmationNumber: flight.confirmationNumber,
+        seatNumber: flight.seatNumber,
+        price: flight.price,
+        currency: flight.currency,
+        isConfirmed: flight.isConfirmed,
+        isSelected: flight.isSelected,
+        cabinClass: flight.cabinClass,
+        passengerName: flight.passengerName,
+        bookingUrl: flight.bookingUrl,
+        memo: flight.memo,
+      });
+
+      return {
+        id: createdFlight.id.toString(),
+        travelPlanId: createdFlight.travelPlanId.toString(),
+        airline: createdFlight.airline,
+        flightNumber: createdFlight.flightNumber,
+        departureAirport: createdFlight.departureAirport,
+        departureAirportCode: createdFlight.departureAirportCode,
+        departureTime: createdFlight.departureTime,
+        arrivalAirport: createdFlight.arrivalAirport,
+        arrivalAirportCode: createdFlight.arrivalAirportCode,
+        arrivalTime: createdFlight.arrivalTime,
+        confirmationNumber: createdFlight.confirmationNumber,
+        seatNumber: createdFlight.seatNumber,
+        price: createdFlight.price,
+        currency: createdFlight.currency,
+        isConfirmed: createdFlight.isConfirmed,
+        isSelected: createdFlight.isSelected,
+        cabinClass: createdFlight.cabinClass,
+        passengerName: createdFlight.passengerName,
+        bookingUrl: createdFlight.bookingUrl,
+        memo: createdFlight.memo,
+        createdBy: createdFlight.createdBy,
+        createdAt: createdFlight.createdAt,
+        updatedAt: createdFlight.updatedAt,
+      };
+    } catch (error) {
+      console.error('Failed to create flight:', error);
+      throw error;
+    }
   };
 
-  const updateFlight = (id: string, updates: Partial<Flight>) => {
-    setFlights((prev) => prev.map((flight) => (flight.id === id ? { ...flight, ...updates } : flight)));
+  const updateFlight = async (flightId: string, updates: Partial<Flight>): Promise<Flight> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const updatedFlight = await travelPlanApi.updateFlight(parseInt(flightId), {
+        airline: updates.airline,
+        flightNumber: updates.flightNumber,
+        departureAirport: updates.departureAirport,
+        departureAirportCode: updates.departureAirportCode,
+        departureTime: updates.departureTime,
+        arrivalAirport: updates.arrivalAirport,
+        arrivalAirportCode: updates.arrivalAirportCode,
+        arrivalTime: updates.arrivalTime,
+        confirmationNumber: updates.confirmationNumber,
+        seatNumber: updates.seatNumber,
+        price: updates.price,
+        currency: updates.currency,
+        isConfirmed: updates.isConfirmed,
+        isSelected: updates.isSelected,
+        cabinClass: updates.cabinClass,
+        passengerName: updates.passengerName,
+        bookingUrl: updates.bookingUrl,
+        memo: updates.memo,
+      });
+
+      return {
+        id: updatedFlight.id.toString(),
+        travelPlanId: updatedFlight.travelPlanId.toString(),
+        airline: updatedFlight.airline,
+        flightNumber: updatedFlight.flightNumber,
+        departureAirport: updatedFlight.departureAirport,
+        departureAirportCode: updatedFlight.departureAirportCode,
+        departureTime: updatedFlight.departureTime,
+        arrivalAirport: updatedFlight.arrivalAirport,
+        arrivalAirportCode: updatedFlight.arrivalAirportCode,
+        arrivalTime: updatedFlight.arrivalTime,
+        confirmationNumber: updatedFlight.confirmationNumber,
+        seatNumber: updatedFlight.seatNumber,
+        price: updatedFlight.price,
+        currency: updatedFlight.currency,
+        isConfirmed: updatedFlight.isConfirmed,
+        isSelected: updatedFlight.isSelected,
+        cabinClass: updatedFlight.cabinClass,
+        passengerName: updatedFlight.passengerName,
+        bookingUrl: updatedFlight.bookingUrl,
+        memo: updatedFlight.memo,
+        createdBy: updatedFlight.createdBy,
+        createdAt: updatedFlight.createdAt,
+        updatedAt: updatedFlight.updatedAt,
+      };
+    } catch (error) {
+      console.error('Failed to update flight:', error);
+      throw error;
+    }
   };
 
-  const deleteFlight = (id: string) => {
-    setFlights((prev) => prev.filter((flight) => flight.id !== id));
-  };
+  const deleteFlight = async (flightId: string): Promise<void> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
 
-  const toggleFlightSelection = (id: string) => {
-    setFlights((prev) =>
-      prev.map((flight) =>
-        flight.id === id ? { ...flight, isSelected: !flight.isSelected } : flight
-      )
-    );
+    try {
+      await travelPlanApi.deleteFlight(parseInt(flightId));
+    } catch (error) {
+      console.error('Failed to delete flight:', error);
+      throw error;
+    }
   };
 
   // Accommodation methods
-  const getAccommodationsByPlan = (planId: string) => {
-    return accommodations.filter((acc) => acc.travelPlanId === planId);
+  const getAccommodationsByPlan = async (planId: string): Promise<Accommodation[]> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const accommodations = await travelPlanApi.getAccommodationsByTravelPlan(parseInt(planId));
+
+      return accommodations.map((accommodation) => ({
+        id: accommodation.id.toString(),
+        travelPlanId: accommodation.travelPlanId.toString(),
+        name: accommodation.name,
+        address: accommodation.address,
+        latitude: accommodation.latitude,
+        longitude: accommodation.longitude,
+        placeId: accommodation.placeId,
+        checkInDate: accommodation.checkInDate,
+        checkInTime: accommodation.checkInTime,
+        checkOutDate: accommodation.checkOutDate,
+        checkOutTime: accommodation.checkOutTime,
+        confirmationNumber: accommodation.confirmationNumber,
+        price: accommodation.price,
+        currency: accommodation.currency,
+        isConfirmed: accommodation.isConfirmed,
+        isSelected: accommodation.isSelected,
+        phoneNumber: accommodation.phoneNumber,
+        email: accommodation.email,
+        bookingUrl: accommodation.bookingUrl,
+        memo: accommodation.memo,
+        createdBy: accommodation.createdBy,
+        createdAt: accommodation.createdAt,
+        updatedAt: accommodation.updatedAt,
+      }));
+    } catch (error) {
+      console.error('Failed to get accommodations:', error);
+      throw error;
+    }
   };
 
-  const addAccommodation = (accommodation: Omit<Accommodation, 'id'>) => {
-    const id = `accommodation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const newAccommodation: Accommodation = {
-      ...accommodation,
-      id,
-    };
-    setAccommodations((prev) => [...prev, newAccommodation]);
-    return id;
+  const createAccommodation = async (planId: string, accommodation: Omit<Accommodation, 'id' | 'travelPlanId' | 'createdAt' | 'updatedAt'>): Promise<Accommodation> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const createdAccommodation = await travelPlanApi.createAccommodation({
+        travelPlanId: parseInt(planId),
+        name: accommodation.name,
+        address: accommodation.address,
+        latitude: accommodation.latitude,
+        longitude: accommodation.longitude,
+        placeId: accommodation.placeId,
+        checkInDate: accommodation.checkInDate,
+        checkInTime: accommodation.checkInTime,
+        checkOutDate: accommodation.checkOutDate,
+        checkOutTime: accommodation.checkOutTime,
+        confirmationNumber: accommodation.confirmationNumber,
+        price: accommodation.price,
+        currency: accommodation.currency,
+        isConfirmed: accommodation.isConfirmed,
+        isSelected: accommodation.isSelected,
+        phoneNumber: accommodation.phoneNumber,
+        email: accommodation.email,
+        bookingUrl: accommodation.bookingUrl,
+        memo: accommodation.memo,
+      });
+
+      return {
+        id: createdAccommodation.id.toString(),
+        travelPlanId: createdAccommodation.travelPlanId.toString(),
+        name: createdAccommodation.name,
+        address: createdAccommodation.address,
+        latitude: createdAccommodation.latitude,
+        longitude: createdAccommodation.longitude,
+        placeId: createdAccommodation.placeId,
+        checkInDate: createdAccommodation.checkInDate,
+        checkInTime: createdAccommodation.checkInTime,
+        checkOutDate: createdAccommodation.checkOutDate,
+        checkOutTime: createdAccommodation.checkOutTime,
+        confirmationNumber: createdAccommodation.confirmationNumber,
+        price: createdAccommodation.price,
+        currency: createdAccommodation.currency,
+        isConfirmed: createdAccommodation.isConfirmed,
+        isSelected: createdAccommodation.isSelected,
+        phoneNumber: createdAccommodation.phoneNumber,
+        email: createdAccommodation.email,
+        bookingUrl: createdAccommodation.bookingUrl,
+        memo: createdAccommodation.memo,
+        createdBy: createdAccommodation.createdBy,
+        createdAt: createdAccommodation.createdAt,
+        updatedAt: createdAccommodation.updatedAt,
+      };
+    } catch (error) {
+      console.error('Failed to create accommodation:', error);
+      throw error;
+    }
   };
 
-  const updateAccommodation = (id: string, updates: Partial<Accommodation>) => {
-    setAccommodations((prev) =>
-      prev.map((acc) => (acc.id === id ? { ...acc, ...updates } : acc))
-    );
+  const updateAccommodation = async (accommodationId: string, updates: Partial<Accommodation>): Promise<Accommodation> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const updatedAccommodation = await travelPlanApi.updateAccommodation(parseInt(accommodationId), {
+        name: updates.name,
+        address: updates.address,
+        latitude: updates.latitude,
+        longitude: updates.longitude,
+        placeId: updates.placeId,
+        checkInDate: updates.checkInDate,
+        checkInTime: updates.checkInTime,
+        checkOutDate: updates.checkOutDate,
+        checkOutTime: updates.checkOutTime,
+        confirmationNumber: updates.confirmationNumber,
+        price: updates.price,
+        currency: updates.currency,
+        isConfirmed: updates.isConfirmed,
+        isSelected: updates.isSelected,
+        phoneNumber: updates.phoneNumber,
+        email: updates.email,
+        bookingUrl: updates.bookingUrl,
+        memo: updates.memo,
+      });
+
+      return {
+        id: updatedAccommodation.id.toString(),
+        travelPlanId: updatedAccommodation.travelPlanId.toString(),
+        name: updatedAccommodation.name,
+        address: updatedAccommodation.address,
+        latitude: updatedAccommodation.latitude,
+        longitude: updatedAccommodation.longitude,
+        placeId: updatedAccommodation.placeId,
+        checkInDate: updatedAccommodation.checkInDate,
+        checkInTime: updatedAccommodation.checkInTime,
+        checkOutDate: updatedAccommodation.checkOutDate,
+        checkOutTime: updatedAccommodation.checkOutTime,
+        confirmationNumber: updatedAccommodation.confirmationNumber,
+        price: updatedAccommodation.price,
+        currency: updatedAccommodation.currency,
+        isConfirmed: updatedAccommodation.isConfirmed,
+        isSelected: updatedAccommodation.isSelected,
+        phoneNumber: updatedAccommodation.phoneNumber,
+        email: updatedAccommodation.email,
+        bookingUrl: updatedAccommodation.bookingUrl,
+        memo: updatedAccommodation.memo,
+        createdBy: updatedAccommodation.createdBy,
+        createdAt: updatedAccommodation.createdAt,
+        updatedAt: updatedAccommodation.updatedAt,
+      };
+    } catch (error) {
+      console.error('Failed to update accommodation:', error);
+      throw error;
+    }
   };
 
-  const deleteAccommodation = (id: string) => {
-    setAccommodations((prev) => prev.filter((acc) => acc.id !== id));
-  };
+  const deleteAccommodation = async (accommodationId: string): Promise<void> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
 
-  const toggleAccommodationSelection = (id: string) => {
-    setAccommodations((prev) =>
-      prev.map((acc) =>
-        acc.id === id ? { ...acc, isSelected: !acc.isSelected } : acc
-      )
-    );
+    try {
+      await travelPlanApi.deleteAccommodation(parseInt(accommodationId));
+    } catch (error) {
+      console.error('Failed to delete accommodation:', error);
+      throw error;
+    }
   };
 
   const value: UserContextValue = {
@@ -1499,8 +1797,6 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     recentTrips: trips,
     popularTrips: trips,
     travelPlans,
-    flights,
-    accommodations,
     isLoadingPlans,
     setAuthUser,
     logout,
@@ -1525,16 +1821,15 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     getMemosByPlace,
     updateMemo,
     deleteMemo,
+    searchFlight,
     getFlightsByPlan,
-    addFlight,
+    createFlight,
     updateFlight,
     deleteFlight,
-    toggleFlightSelection,
     getAccommodationsByPlan,
-    addAccommodation,
+    createAccommodation,
     updateAccommodation,
     deleteAccommodation,
-    toggleAccommodationSelection,
   };
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;

@@ -196,6 +196,164 @@ export interface ExpenseSummaryDto {
     expenseCount: number;     // 지출 건수
 }
 
+// ============ Accommodation DTO ============
+export interface AccommodationDto {
+    id: number;
+    travelPlanId: number;
+    name: string;
+    address?: string;
+    latitude?: number;
+    longitude?: number;
+    placeId?: string; // Google Place ID
+    checkInDate: string; // YYYY-MM-DD
+    checkInTime?: string; // HH:mm
+    checkOutDate: string; // YYYY-MM-DD
+    checkOutTime?: string; // HH:mm
+    confirmationNumber?: string;
+    price?: number;
+    currency?: string;
+    isConfirmed?: boolean;
+    isSelected?: boolean; // 선택 여부 (여러 개 선택 가능)
+    phoneNumber?: string;
+    email?: string;
+    bookingUrl?: string;
+    memo?: string;
+    createdBy?: number;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface CreateAccommodationRequest {
+    travelPlanId: number;
+    name: string;
+    address?: string;
+    latitude?: number;
+    longitude?: number;
+    placeId?: string;
+    checkInDate: string;
+    checkInTime?: string;
+    checkOutDate: string;
+    checkOutTime?: string;
+    confirmationNumber?: string;
+    price?: number;
+    currency?: string;
+    isConfirmed?: boolean;
+    isSelected?: boolean;
+    phoneNumber?: string;
+    email?: string;
+    bookingUrl?: string;
+    memo?: string;
+}
+
+export interface UpdateAccommodationRequest {
+    name?: string;
+    address?: string;
+    latitude?: number;
+    longitude?: number;
+    placeId?: string;
+    checkInDate?: string;
+    checkInTime?: string;
+    checkOutDate?: string;
+    checkOutTime?: string;
+    confirmationNumber?: string;
+    price?: number;
+    currency?: string;
+    isConfirmed?: boolean;
+    isSelected?: boolean;
+    phoneNumber?: string;
+    email?: string;
+    bookingUrl?: string;
+    memo?: string;
+}
+
+// ============ Flight DTO ============
+export interface FlightSearchRequest {
+    carrierCode: string; // 항공사 코드 (예: KE, OZ, JL, NH)
+    flightNumber: string; // 편명 (예: 705)
+    scheduledDepartureDate: string; // YYYY-MM-DD
+}
+
+export interface FlightSearchResponse {
+    airline: string;
+    flightNumber: string;
+    departureAirport: string;
+    departureAirportCode: string;
+    arrivalAirport: string;
+    arrivalAirportCode: string;
+    departureTime: string; // HH:mm
+    arrivalTime: string; // HH:mm
+    scheduledDepartureDate: string; // YYYY-MM-DD
+}
+
+export interface FlightDto {
+    id: number;
+    travelPlanId: number;
+    airline: string;
+    flightNumber: string;
+    departureAirport: string;
+    departureAirportCode?: string;
+    departureTime: string; // ISO DateTime
+    arrivalAirport: string;
+    arrivalAirportCode?: string;
+    arrivalTime: string; // ISO DateTime
+    confirmationNumber?: string;
+    seatNumber?: string;
+    price?: number;
+    currency?: string;
+    isConfirmed?: boolean;
+    isSelected?: boolean; // 선택 여부 (여러 개 선택 가능)
+    cabinClass?: string;
+    passengerName?: string;
+    bookingUrl?: string;
+    memo?: string;
+    createdBy?: number;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface CreateFlightRequest {
+    travelPlanId: number;
+    airline: string;
+    flightNumber: string;
+    departureAirport: string;
+    departureAirportCode?: string;
+    departureTime: string;
+    arrivalAirport: string;
+    arrivalAirportCode?: string;
+    arrivalTime: string;
+    confirmationNumber?: string;
+    seatNumber?: string;
+    price?: number;
+    currency?: string;
+    isConfirmed?: boolean;
+    isSelected?: boolean;
+    cabinClass?: string;
+    passengerName?: string;
+    bookingUrl?: string;
+    memo?: string;
+}
+
+export interface UpdateFlightRequest {
+    airline?: string;
+    flightNumber?: string;
+    departureAirport?: string;
+    departureAirportCode?: string;
+    departureTime?: string;
+    arrivalAirport?: string;
+    arrivalAirportCode?: string;
+    arrivalTime?: string;
+    confirmationNumber?: string;
+    seatNumber?: string;
+    price?: number;
+    currency?: string;
+    isConfirmed?: boolean;
+    isSelected?: boolean;
+    cabinClass?: string;
+    passengerName?: string;
+    bookingUrl?: string;
+    memo?: string;
+}
+
 export interface PlaceSearchResult {
     name: string;
     address: string;
@@ -1137,6 +1295,252 @@ class TravelPlanApi {
             }
         } catch (error) {
             console.error('Delete memo error:', error);
+            throw error;
+        }
+    }
+
+    // ============ Accommodation API ============
+
+    // 숙소 등록
+    async createAccommodation(request: CreateAccommodationRequest): Promise<AccommodationDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/accommodations`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify(request),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '숙소 등록에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Create accommodation error:', error);
+            throw error;
+        }
+    }
+
+    // 여행 계획별 숙소 목록 조회
+    async getAccommodationsByTravelPlan(travelPlanId: number): Promise<AccommodationDto[]> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/accommodations/travel-plan/${travelPlanId}`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('숙소 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get accommodations error:', error);
+            throw error;
+        }
+    }
+
+    // 숙소 상세 조회
+    async getAccommodation(accommodationId: number): Promise<AccommodationDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/accommodations/${accommodationId}`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('숙소 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get accommodation error:', error);
+            throw error;
+        }
+    }
+
+    // 숙소 수정
+    async updateAccommodation(accommodationId: number, request: UpdateAccommodationRequest): Promise<AccommodationDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/accommodations/${accommodationId}`,
+                {
+                    method: 'PUT',
+                    body: JSON.stringify(request),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '숙소 수정에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Update accommodation error:', error);
+            throw error;
+        }
+    }
+
+    // 숙소 삭제
+    async deleteAccommodation(accommodationId: number): Promise<void> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/accommodations/${accommodationId}`,
+                {
+                    method: 'DELETE',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('숙소 삭제에 실패했습니다.');
+            }
+        } catch (error) {
+            console.error('Delete accommodation error:', error);
+            throw error;
+        }
+    }
+
+    // ============ Flight API ============
+
+    // 항공편 검색 (Amadeus API)
+    async searchFlight(request: FlightSearchRequest): Promise<FlightSearchResponse> {
+        try {
+            const response = await fetch(
+                `${API_BASE_URL}/flights/search`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(request),
+                }
+            );
+
+            if (!response.ok) {
+                if (response.status === 404) {
+                    throw new Error('항공편 정보를 찾을 수 없습니다. 수동으로 입력해주세요.');
+                }
+                throw new Error('항공편 검색에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Search flight error:', error);
+            throw error;
+        }
+    }
+
+    // 항공권 등록
+    async createFlight(request: CreateFlightRequest): Promise<FlightDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/flights`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify(request),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '항공권 등록에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Create flight error:', error);
+            throw error;
+        }
+    }
+
+    // 여행 계획별 항공권 목록 조회
+    async getFlightsByTravelPlan(travelPlanId: number): Promise<FlightDto[]> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/flights/travel-plan/${travelPlanId}`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('항공권 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get flights error:', error);
+            throw error;
+        }
+    }
+
+    // 항공권 상세 조회
+    async getFlight(flightId: number): Promise<FlightDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/flights/${flightId}`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('항공권 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get flight error:', error);
+            throw error;
+        }
+    }
+
+    // 항공권 수정
+    async updateFlight(flightId: number, request: UpdateFlightRequest): Promise<FlightDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/flights/${flightId}`,
+                {
+                    method: 'PUT',
+                    body: JSON.stringify(request),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '항공권 수정에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Update flight error:', error);
+            throw error;
+        }
+    }
+
+    // 항공권 삭제
+    async deleteFlight(flightId: number): Promise<void> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/flights/${flightId}`,
+                {
+                    method: 'DELETE',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('항공권 삭제에 실패했습니다.');
+            }
+        } catch (error) {
+            console.error('Delete flight error:', error);
             throw error;
         }
     }
