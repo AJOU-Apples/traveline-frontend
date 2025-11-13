@@ -214,12 +214,59 @@ export default function PlanDetailScreen() {
         return '₩'; // 기본값: 한국 원화
     };
 
-    // 장소의 총 지출 계산
-    const calculateTotalExpense = (place: Place): number => {
-        if (!place.expenses || place.expenses.length === 0) {
-            return 0;
+    // 통화 코드에 따른 통화 기호 매핑
+    const getSymbolForCurrency = (currency?: string) => {
+        switch (currency) {
+            case 'KRW':
+                return '₩';
+            case 'JPY':
+                return '¥';
+            case 'USD':
+                return '$';
+            case 'EUR':
+                return '€';
+            case 'CNY':
+                return '¥';
+            case 'THB':
+                return '฿';
+            case 'VND':
+                return '₫';
+            case 'SGD':
+                return 'S$';
+            case 'AED':
+                return 'AED';
+            case 'AUD':
+                return 'A$';
+            default:
+                return '';
         }
-        return place.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+    };
+
+    // 장소의 총 지출 계산 (통화별)
+    const getExpenseTotalsByCurrency = (place: Place): Record<string, number> => {
+        if (!place.expenses || place.expenses.length === 0) {
+            return {};
+        }
+
+        return place.expenses.reduce<Record<string, number>>((totals, expense) => {
+            const currency = expense.currency || 'KRW';
+            totals[currency] = (totals[currency] || 0) + expense.amount;
+            return totals;
+        }, {});
+    };
+
+    const formatExpenseSummary = (place: Place) => {
+        const totalsByCurrency = getExpenseTotalsByCurrency(place);
+        const entries = Object.entries(totalsByCurrency);
+
+        if (entries.length === 0) {
+            // 목적지 기반 통화 기호로 0 표시
+            return `지출 총합 ${getCurrencySymbol()}0`;
+        }
+
+        return `지출 총합 ${entries
+            .map(([currency, amount]) => `${getSymbolForCurrency(currency) || currency} ${amount.toLocaleString()}`)
+            .join(' + ')}`;
     };
 
     // 지도 영역 높이 애니메이션
@@ -687,7 +734,7 @@ export default function PlanDetailScreen() {
                                     <Text style={styles.placeLikeCount}>0</Text>
                                 </View>
                                 <Text style={styles.placeExpense}>
-                                    지출 총합 {calculateTotalExpense(place).toLocaleString()}{getCurrencySymbol()}
+                                    {formatExpenseSummary(place)}
                                 </Text>
                             </View>
                         </View>

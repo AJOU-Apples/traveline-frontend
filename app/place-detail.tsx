@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { View, StyleSheet, TouchableOpacity, ScrollView, Platform, Image, Modal, TextInput, Alert, Dimensions } from 'react-native';
 import { Text } from 'react-native-paper';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
@@ -75,13 +75,21 @@ export default function PlaceDetailScreen() {
         return 'KRW';
     };
 
-    // 참가자 목록 (임시로 현재 사용자 + 더미 데이터)
-    // TODO: 백엔드에서 실제 참가자 목록 가져오기
-    const participants = [
-        { id: authUser?.id.toString() || '1', name: username || '나' },
-        { id: '2', name: '홍길동' },
-        { id: '3', name: '김철수' },
-    ];
+    // 참가자 목록 (여행 계획의 실제 멤버 기반)
+    const participants = useMemo(() => {
+        if (!tripData?.members) {
+            // members가 없으면 현재 사용자만 포함
+            return [{ id: authUser?.id.toString() || '', name: username || '나' }];
+        }
+
+        // ACCEPTED 상태인 멤버만 필터링
+        return tripData.members
+            .filter(member => member.status === 'ACCEPTED')
+            .map(member => ({
+                id: member.userId,
+                name: member.username,
+            }));
+    }, [tripData?.members, authUser?.id, username]);
 
     // 디버깅: place 데이터 확인
     useEffect(() => {
@@ -94,9 +102,22 @@ export default function PlaceDetailScreen() {
         }
     }, [place, planId, dayNumber, placeId]);
 
+    // place가 삭제되었을 때 자동으로 뒤로 가기
+    useEffect(() => {
+        if (placeId && tripData && !place) {
+            console.log('⚠️ [place-detail] Place not found, navigating back...');
+            // 약간의 지연을 주어 자연스럽게 전환
+            const timer = setTimeout(() => {
+                router.back();
+            }, 100);
+            return () => clearTimeout(timer);
+        }
+    }, [placeId, tripData, place, router]);
+
     // 사진 로드 함수
     const loadPhotos = async () => {
-        if (!placeId || isLoadingRef.current) return;
+        // place가 존재하지 않으면 API 호출하지 않음 (삭제된 장소 방지)
+        if (!placeId || !place || isLoadingRef.current) return;
 
         console.log('📸 [loadPhotos] Starting to load photos for placeId:', placeId);
         isLoadingRef.current = true;
@@ -107,8 +128,8 @@ export default function PlaceDetailScreen() {
             console.log('📸 [loadPhotos] Loaded photos:', photos?.length || 0, 'photos');
             console.log('📸 [loadPhotos] Photo details:', JSON.stringify(photos, null, 2));
         } catch (error) {
-            console.error('❌ [loadPhotos] Failed to load photos:', error);
-            Alert.alert('오류', '사진을 불러오는 중 오류가 발생했습니다.');
+            console.error('❌ [loadPhotos] Failed to load photos for place', placeId, ':', error);
+            // 삭제된 장소인 경우 조용히 처리
         } finally {
             setIsLoadingPhotos(false);
             isLoadingRef.current = false;
@@ -117,7 +138,8 @@ export default function PlaceDetailScreen() {
 
     // 지출 로드 함수
     const loadExpenses = async () => {
-        if (!placeId || isLoadingExpensesRef.current) return;
+        // place가 존재하지 않으면 API 호출하지 않음 (삭제된 장소 방지)
+        if (!placeId || !place || isLoadingExpensesRef.current) return;
 
         console.log('💰 [loadExpenses] Starting to load expenses for placeId:', placeId);
         isLoadingExpensesRef.current = true;
@@ -127,8 +149,8 @@ export default function PlaceDetailScreen() {
             const expenses = await getExpensesByPlace(placeId);
             console.log('💰 [loadExpenses] Loaded expenses:', expenses?.length || 0, 'expenses');
         } catch (error) {
-            console.error('❌ [loadExpenses] Failed to load expenses:', error);
-            Alert.alert('오류', '지출을 불러오는 중 오류가 발생했습니다.');
+            console.error('❌ [loadExpenses] Failed to load expenses for place', placeId, ':', error);
+            // 삭제된 장소인 경우 조용히 처리
         } finally {
             setIsLoadingExpenses(false);
             isLoadingExpensesRef.current = false;
@@ -137,7 +159,8 @@ export default function PlaceDetailScreen() {
 
     // 메모 로드 함수
     const loadMemos = async () => {
-        if (!placeId || isLoadingMemosRef.current) return;
+        // place가 존재하지 않으면 API 호출하지 않음 (삭제된 장소 방지)
+        if (!placeId || !place || isLoadingMemosRef.current) return;
 
         console.log('📝 [loadMemos] Starting to load memos for placeId:', placeId);
         isLoadingMemosRef.current = true;
@@ -147,8 +170,8 @@ export default function PlaceDetailScreen() {
             const memos = await getMemosByPlace(placeId);
             console.log('📝 [loadMemos] Loaded memos:', memos?.length || 0, 'memos');
         } catch (error) {
-            console.error('❌ [loadMemos] Failed to load memos:', error);
-            Alert.alert('오류', '메모를 불러오는 중 오류가 발생했습니다.');
+            console.error('❌ [loadMemos] Failed to load memos for place', placeId, ':', error);
+            // 삭제된 장소인 경우 조용히 처리
         } finally {
             setIsLoadingMemos(false);
             isLoadingMemosRef.current = false;
@@ -158,11 +181,14 @@ export default function PlaceDetailScreen() {
     // 화면 포커스될 때 사진, 지출, 메모 로드 (1회만)
     useFocusEffect(
         useCallback(() => {
-            loadPhotos();
-            loadExpenses();
-            loadMemos();
+            // place가 존재할 때만 로드
+            if (place) {
+                loadPhotos();
+                loadExpenses();
+                loadMemos();
+            }
             // eslint-disable-next-line react-hooks/exhaustive-deps
-        }, [placeId]) // placeId가 변경될 때만 실행
+        }, [placeId]) // placeId가 변경될 때만 실행 (place는 매번 새 객체라 제외)
     );
 
     // 목적지에 따른 통화 기호 반환
@@ -350,6 +376,7 @@ export default function PlaceDetailScreen() {
                     title: expenseTitle,
                     amount: parseFloat(expenseAmount),
                     type: expenseType,
+                    paidById: expensePaidBy || undefined,
                     memo: expenseMemo.trim() || undefined,
                 });
                 Alert.alert('완료', '지출이 수정되었습니다.');
@@ -364,6 +391,7 @@ export default function PlaceDetailScreen() {
                         amount: parseFloat(expenseAmount),
                         currency: getDefaultCurrency(),
                         type: expenseType,
+                        paidById: expensePaidBy || undefined,
                         memo: expenseMemo.trim() || undefined,
                     }
                 );

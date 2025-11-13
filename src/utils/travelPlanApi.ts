@@ -151,6 +151,7 @@ export interface MemoDto {
     placeId: number;
     author: AuthorDto;
     content: string;
+    visibility: 'PERSONAL' | 'SHARED'; // 공개 설정
     createdAt: string;
     updatedAt: string;
 }
@@ -163,6 +164,7 @@ export interface CreateExpenseRequest {
     amount: number;
     currency?: string; // default: KRW
     type: 'PERSONAL' | 'SHARED';
+    paidById?: number;
     splitWith?: number[]; // SHARED인 경우 정산할 사람들
     memo?: string;
     expenseDate?: string; // YYYY-MM-DD
@@ -173,6 +175,7 @@ export interface UpdateExpenseRequest {
     title?: string;
     amount?: number;
     type?: 'PERSONAL' | 'SHARED';
+    paidById?: number;
     splitWith?: number[];
     isSettled?: boolean;
     memo?: string;
@@ -183,10 +186,12 @@ export interface UpdateExpenseRequest {
 export interface CreateMemoRequest {
     placeId: number;
     content: string;
+    visibility?: 'PERSONAL' | 'SHARED'; // 공개 설정 (기본값: SHARED)
 }
 
 export interface UpdateMemoRequest {
-    content: string;
+    content?: string;
+    visibility?: 'PERSONAL' | 'SHARED'; // 공개 설정
 }
 
 export interface ExpenseSummaryDto {
@@ -446,6 +451,40 @@ export interface TravelDayDto {
     places?: PlaceDto[]; // Optional: 백엔드에서 places를 포함하지 않을 수 있음
 }
 
+export type MemberRole = 'OWNER' | 'EDITOR' | 'VIEWER';
+export type InvitationStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
+
+export interface MemberDto {
+    id: number;
+    userId: number;
+    username: string;
+    name: string; // 실제 사용자 이름
+    email: string;
+    profileImage?: string;
+    role: MemberRole;
+    status: InvitationStatus;
+    joinedAt?: string;
+    invitedAt?: string;
+    invitedBy?: {
+        id: number;
+        username: string;
+    };
+    invitedByName?: string;
+}
+
+export interface TravelPlanInvitationDto {
+    id: number;
+    travelPlanId: number;
+    travelPlanTitle: string;
+    role: MemberRole;
+    status: InvitationStatus;
+    invitedAt: string;
+    invitedBy: {
+        id: number;
+        username: string;
+    };
+}
+
 export interface TravelPlanDto {
     id: number;
     title: string;
@@ -455,6 +494,8 @@ export interface TravelPlanDto {
     participants: number;
     isArchived: boolean;
     days: TravelDayDto[];
+    members?: MemberDto[]; // 멤버 목록
+    myRole?: MemberRole; // 현재 사용자의 역할
 }
 
 export interface CreateTravelPlanRequest {
@@ -505,6 +546,16 @@ export interface ReorderPlacesRequest {
 export interface UpdatePlaceMemoRequest {
     type: 'shared' | 'personal';
     memo: string; // 빈 문자열이면 삭제
+}
+
+// ============ 멤버 관리 요청 타입 ============
+export interface InviteMemberRequest {
+    email: string;
+    role: 'EDITOR' | 'VIEWER'; // OWNER는 초대 불가
+}
+
+export interface UpdateMemberRoleRequest {
+    role: MemberRole;
 }
 
 export interface AddPhotoRequest {
@@ -1872,6 +1923,159 @@ class TravelPlanApi {
             return response.json();
         } catch (error) {
             console.error('Initialize tasks error:', error);
+            throw error;
+        }
+    }
+
+    // ============ 멤버 관리 API ============
+
+    // 멤버 초대
+    async inviteMember(travelPlanId: number, request: InviteMemberRequest): Promise<MemberDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${travelPlanId}/members`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify(request),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '멤버 초대에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Invite member error:', error);
+            throw error;
+        }
+    }
+
+    // 여행 계획의 멤버 목록 조회
+    async getMembersByTravelPlan(travelPlanId: number): Promise<MemberDto[]> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${travelPlanId}/members`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('멤버 목록 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get members error:', error);
+            throw error;
+        }
+    }
+
+    // 나의 초대 목록 조회
+    async getMyInvitations(): Promise<TravelPlanInvitationDto[]> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/members/invitations`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('초대 목록 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get invitations error:', error);
+            throw error;
+        }
+    }
+
+    // 초대 수락
+    async acceptInvitation(memberId: number): Promise<MemberDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/members/${memberId}/accept`,
+                {
+                    method: 'POST',
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '초대 수락에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Accept invitation error:', error);
+            throw error;
+        }
+    }
+
+    // 초대 거절
+    async rejectInvitation(memberId: number): Promise<MemberDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/members/${memberId}/reject`,
+                {
+                    method: 'POST',
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '초대 거절에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Reject invitation error:', error);
+            throw error;
+        }
+    }
+
+    // 멤버 역할 변경 (OWNER만 가능)
+    async updateMemberRole(memberId: number, request: UpdateMemberRoleRequest): Promise<MemberDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/members/${memberId}/role`,
+                {
+                    method: 'PUT',
+                    body: JSON.stringify(request),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '멤버 역할 변경에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Update member role error:', error);
+            throw error;
+        }
+    }
+
+    // 멤버 제거 (OWNER만 가능)
+    async removeMember(memberId: number): Promise<void> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/members/${memberId}`,
+                {
+                    method: 'DELETE',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('멤버 제거에 실패했습니다.');
+            }
+        } catch (error) {
+            console.error('Remove member error:', error);
             throw error;
         }
     }

@@ -89,6 +89,7 @@ export type Memo = {
   placeId: string;
   author: Author;
   content: string;
+  visibility: 'PERSONAL' | 'SHARED'; // 공개 설정
   createdAt: string;
   updatedAt: string;
 };
@@ -207,6 +208,40 @@ export type Task = {
   updatedAt: string;
 };
 
+export type MemberRole = 'OWNER' | 'EDITOR' | 'VIEWER';
+export type InvitationStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED';
+
+export type Member = {
+  id: string;
+  userId: string;
+  username: string;
+  name: string; // 실제 사용자 이름
+  email: string;
+  profileImage?: string;
+  role: MemberRole;
+  status: InvitationStatus;
+  joinedAt?: string;
+  invitedAt?: string;
+  invitedBy?: {
+    id: string;
+    username: string;
+  };
+  invitedByName?: string;
+};
+
+export type TravelPlanInvitation = {
+  id: string;
+  travelPlanId: string;
+  travelPlanTitle: string;
+  role: MemberRole;
+  status: InvitationStatus;
+  invitedAt: string;
+  invitedBy: {
+    id: string;
+    username: string;
+  };
+};
+
 export type TravelPlan = {
   id: string;
   title: string;
@@ -223,6 +258,8 @@ export type TravelPlan = {
   endDate: string; // YYYY.MM.DD (화면 표시용)
   participants: number;
   days: TravelDay[];
+  members?: Member[]; // 멤버 목록
+  myRole?: MemberRole; // 현재 사용자의 역할
 };
 
 export type AuthUser = {
@@ -286,6 +323,25 @@ const convertTravelPlanFromDto = (dto: TravelPlanDto): TravelPlan => {
         expenses: [],
       })) || [], // places가 없으면 빈 배열로 처리
     })),
+    // 멤버 정보 추가
+    members: dto.members?.map(member => ({
+      id: member.id.toString(),
+      userId: member.userId.toString(),
+      username: member.username,
+      name: member.name, // 실제 사용자 이름
+      email: member.email,
+      profileImage: member.profileImage,
+      role: member.role,
+      status: member.status,
+      joinedAt: member.joinedAt,
+      invitedAt: member.invitedAt,
+      invitedBy: member.invitedBy ? {
+        id: member.invitedBy.id.toString(),
+        username: member.invitedBy.username,
+      } : undefined,
+      invitedByName: member.invitedByName,
+    })),
+    myRole: dto.myRole,
   };
 };
 
@@ -324,6 +380,7 @@ type UserContextValue = {
     amount: number;
     currency?: string;
     type: 'PERSONAL' | 'SHARED';
+    paidById?: string;
     splitWith?: string[];
     memo?: string;
     expenseDate?: string;
@@ -335,6 +392,7 @@ type UserContextValue = {
     title?: string;
     amount?: number;
     type?: 'PERSONAL' | 'SHARED';
+    paidById?: string;
     splitWith?: string[];
     isSettled?: boolean;
     memo?: string;
@@ -343,9 +401,9 @@ type UserContextValue = {
   }) => Promise<Expense>;
   deleteExpense: (expenseId: string) => Promise<void>;
   // Memo methods (new)
-  createMemo: (placeId: string, content: string) => Promise<Memo>;
+  createMemo: (placeId: string, content: string, visibility?: 'PERSONAL' | 'SHARED') => Promise<Memo>;
   getMemosByPlace: (placeId: string) => Promise<Memo[]>;
-  updateMemo: (memoId: string, content: string) => Promise<Memo>;
+  updateMemo: (memoId: string, content?: string, visibility?: 'PERSONAL' | 'SHARED') => Promise<Memo>;
   deleteMemo: (memoId: string) => Promise<void>;
   // Flight search (Amadeus)
   searchFlight: (request: FlightSearchRequest) => Promise<FlightSearchResponse>;
@@ -369,6 +427,14 @@ type UserContextValue = {
   createTask: (planId: string, task: Omit<Task, 'id' | 'travelPlanId' | 'createdAt' | 'updatedAt'>) => Promise<Task>;
   updateTask: (taskId: string, updates: Partial<Task>) => Promise<Task>;
   deleteTask: (taskId: string) => Promise<void>;
+  // Member methods
+  inviteMember: (planId: string, email: string, role: 'EDITOR' | 'VIEWER') => Promise<Member>;
+  getMembersByPlan: (planId: string) => Promise<Member[]>;
+  getMyInvitations: () => Promise<TravelPlanInvitation[]>;
+  acceptInvitation: (memberId: string) => Promise<Member>;
+  rejectInvitation: (memberId: string) => Promise<Member>;
+  updateMemberRole: (memberId: string, role: MemberRole) => Promise<Member>;
+  removeMember: (memberId: string) => Promise<void>;
 };
 
 const defaultTrips: Trip[] = [
@@ -1133,6 +1199,7 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
         amount: expense.amount,
         currency: expense.currency,
         type: expense.type,
+        paidById: expense.paidById ? parseInt(expense.paidById) : undefined,
         splitWith: expense.splitWith?.map((id) => parseInt(id)),
         memo: expense.memo,
         expenseDate: expense.expenseDate,
@@ -1312,6 +1379,7 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
         parseInt(expenseId),
         {
           ...updates,
+        paidById: updates.paidById ? parseInt(updates.paidById) : undefined,
           splitWith: updates.splitWith?.map((id) => parseInt(id)),
         }
       );
@@ -1345,15 +1413,38 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
           ...plan,
           days: plan.days.map((day) => ({
             ...day,
-            places: day.places.map((place) => ({
-              ...place,
-              expenses: place.expenses?.map((expense) =>
-                expense.id === expenseId ? convertedExpense : expense
-              ),
-            })),
+            places: day.places.map((place) => {
+              if (place.id !== convertedExpense.placeId) {
+                return place;
+              }
+
+              const existingExpenses = place.expenses ?? [];
+              const expenseIndex = existingExpenses.findIndex((expense) => expense.id === expenseId);
+
+              let nextExpenses: Expense[];
+              if (expenseIndex >= 0) {
+                nextExpenses = existingExpenses.map((expense, index) =>
+                  index === expenseIndex ? convertedExpense : expense
+                );
+              } else {
+                nextExpenses = [...existingExpenses, convertedExpense];
+              }
+
+              return {
+                ...place,
+                expenses: nextExpenses,
+              };
+            }),
           })),
         }))
       );
+
+      // 최신 데이터를 보장하기 위해 해당 장소의 지출 목록 재조회
+      if (convertedExpense.placeId) {
+        getExpensesByPlace(convertedExpense.placeId).catch((error) =>
+          console.error('Failed to refresh expenses after update:', error)
+        );
+      }
 
       return convertedExpense;
     } catch (error) {
@@ -1390,7 +1481,7 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
   };
 
   // Memo methods
-  const createMemo = async (placeId: string, content: string): Promise<Memo> => {
+  const createMemo = async (placeId: string, content: string, visibility?: 'PERSONAL' | 'SHARED'): Promise<Memo> => {
     if (!authUser) {
       throw new Error('로그인이 필요합니다.');
     }
@@ -1399,6 +1490,7 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
       const createdMemo = await travelPlanApi.createMemo({
         placeId: parseInt(placeId),
         content: content,
+        visibility: visibility,
       });
 
       const newMemo: Memo = {
@@ -1412,6 +1504,7 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
           profileImageUrl: createdMemo.author.profileImageUrl,
         },
         content: createdMemo.content,
+        visibility: createdMemo.visibility,
         createdAt: createdMemo.createdAt,
         updatedAt: createdMemo.updatedAt,
       };
@@ -1461,6 +1554,7 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
           profileImageUrl: memo.author.profileImageUrl,
         },
         content: memo.content,
+        visibility: memo.visibility,
         createdAt: memo.createdAt,
         updatedAt: memo.updatedAt,
       }));
@@ -1491,7 +1585,7 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     }
   };
 
-  const updateMemo = async (memoId: string, content: string): Promise<Memo> => {
+  const updateMemo = async (memoId: string, content?: string, visibility?: 'PERSONAL' | 'SHARED'): Promise<Memo> => {
     if (!authUser) {
       throw new Error('로그인이 필요합니다.');
     }
@@ -1499,6 +1593,7 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     try {
       const updatedMemo = await travelPlanApi.updateMemo(parseInt(memoId), {
         content: content,
+        visibility: visibility,
       });
 
       const memo: Memo = {
@@ -1512,6 +1607,7 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
           profileImageUrl: updatedMemo.author.profileImageUrl,
         },
         content: updatedMemo.content,
+        visibility: updatedMemo.visibility,
         createdAt: updatedMemo.createdAt,
         updatedAt: updatedMemo.updatedAt,
       };
@@ -2128,6 +2224,172 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     }
   };
 
+  // Member methods
+  const inviteMember = async (planId: string, email: string, role: 'EDITOR' | 'VIEWER'): Promise<Member> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const memberDto = await travelPlanApi.inviteMember(parseInt(planId), { email, role });
+
+      return {
+        id: memberDto.id.toString(),
+        userId: memberDto.userId.toString(),
+        username: memberDto.username,
+        email: memberDto.email,
+        role: memberDto.role,
+        status: memberDto.status,
+        joinedAt: memberDto.joinedAt,
+        invitedAt: memberDto.invitedAt,
+        invitedBy: memberDto.invitedBy ? {
+          id: memberDto.invitedBy.id.toString(),
+          username: memberDto.invitedBy.username,
+        } : undefined,
+      };
+    } catch (error) {
+      console.error('Failed to invite member:', error);
+      throw error;
+    }
+  };
+
+  const getMembersByPlan = async (planId: string): Promise<Member[]> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const membersDto = await travelPlanApi.getMembersByTravelPlan(parseInt(planId));
+
+      return membersDto.map(member => ({
+        id: member.id.toString(),
+        userId: member.userId.toString(),
+        username: member.username,
+        email: member.email,
+        role: member.role,
+        status: member.status,
+        joinedAt: member.joinedAt,
+        invitedAt: member.invitedAt,
+        invitedBy: member.invitedBy ? {
+          id: member.invitedBy.id.toString(),
+          username: member.invitedBy.username,
+        } : undefined,
+      }));
+    } catch (error) {
+      console.error('Failed to get members:', error);
+      throw error;
+    }
+  };
+
+  const getMyInvitations = async (): Promise<TravelPlanInvitation[]> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const invitationsDto = await travelPlanApi.getMyInvitations();
+
+      return invitationsDto.map(invitation => ({
+        id: invitation.id.toString(),
+        travelPlanId: invitation.travelPlanId.toString(),
+        travelPlanTitle: invitation.travelPlanTitle,
+        role: invitation.role,
+        status: invitation.status,
+        invitedAt: invitation.invitedAt,
+        invitedBy: {
+          id: invitation.invitedBy.id.toString(),
+          username: invitation.invitedBy.username,
+        },
+      }));
+    } catch (error) {
+      console.error('Failed to get invitations:', error);
+      throw error;
+    }
+  };
+
+  const acceptInvitation = async (memberId: string): Promise<Member> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const memberDto = await travelPlanApi.acceptInvitation(parseInt(memberId));
+
+      // 여행 계획 목록 다시 로드
+      await loadTravelPlans();
+
+      return {
+        id: memberDto.id.toString(),
+        userId: memberDto.userId.toString(),
+        username: memberDto.username,
+        email: memberDto.email,
+        role: memberDto.role,
+        status: memberDto.status,
+        joinedAt: memberDto.joinedAt,
+      };
+    } catch (error) {
+      console.error('Failed to accept invitation:', error);
+      throw error;
+    }
+  };
+
+  const rejectInvitation = async (memberId: string): Promise<Member> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const memberDto = await travelPlanApi.rejectInvitation(parseInt(memberId));
+
+      return {
+        id: memberDto.id.toString(),
+        userId: memberDto.userId.toString(),
+        username: memberDto.username,
+        email: memberDto.email,
+        role: memberDto.role,
+        status: memberDto.status,
+      };
+    } catch (error) {
+      console.error('Failed to reject invitation:', error);
+      throw error;
+    }
+  };
+
+  const updateMemberRole = async (memberId: string, role: MemberRole): Promise<Member> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const memberDto = await travelPlanApi.updateMemberRole(parseInt(memberId), { role });
+
+      return {
+        id: memberDto.id.toString(),
+        userId: memberDto.userId.toString(),
+        username: memberDto.username,
+        email: memberDto.email,
+        role: memberDto.role,
+        status: memberDto.status,
+      };
+    } catch (error) {
+      console.error('Failed to update member role:', error);
+      throw error;
+    }
+  };
+
+  const removeMember = async (memberId: string): Promise<void> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      await travelPlanApi.removeMember(parseInt(memberId));
+    } catch (error) {
+      console.error('Failed to remove member:', error);
+      throw error;
+    }
+  };
+
   const value: UserContextValue = {
     username,
     authUser,
@@ -2178,6 +2440,13 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     createTask,
     updateTask,
     deleteTask,
+    inviteMember,
+    getMembersByPlan,
+    getMyInvitations,
+    acceptInvitation,
+    rejectInvitation,
+    updateMemberRole,
+    removeMember,
   };
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;
