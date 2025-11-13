@@ -409,6 +409,11 @@ export default function PlanDetailScreen() {
 
         return flights
             .filter((flight) => {
+                // isSelected가 true인 항공편만 표시
+                if (!flight.isSelected) {
+                    return false;
+                }
+
                 const departureDate = extractDateFromValue(flight.departureDate ?? flight.departureTime);
                 const arrivalDate = extractDateFromValue(flight.arrivalDate ?? flight.arrivalTime);
                 return departureDate === currentDayData.date || arrivalDate === currentDayData.date;
@@ -1078,7 +1083,13 @@ export default function PlanDetailScreen() {
                 <TouchableOpacity style={styles.navItem} onPress={handleChecklistPress}>
                     <MaterialIcons name="card-travel" size={32} color="#9E9E9E" />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.navItem}>
+                <TouchableOpacity
+                    style={styles.navItem}
+                    onPress={() => router.push({
+                        pathname: '/expenses',
+                        params: { planId: planId || '' }
+                    })}
+                >
                     <MaterialIcons name="receipt" size={32} color="#9E9E9E" />
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.navItem}>

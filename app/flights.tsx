@@ -68,6 +68,33 @@ export default function FlightsScreen() {
                 return;
             }
 
+            // 선택하려는 경우 (현재 선택되지 않은 상태)
+            if (!targetFlight.isSelected) {
+                // 같은 날짜에 이미 선택된 항공편이 있는지 확인
+                const targetDate = new Date(targetFlight.departureTime).toDateString();
+                const conflictingFlight = flights.find((flight) => {
+                    if (flight.id === selectedFlightId) return false; // 자기 자신 제외
+                    if (!flight.isSelected) return false; // 선택되지 않은 항공편 제외
+
+                    const flightDate = new Date(flight.departureTime).toDateString();
+                    return flightDate === targetDate;
+                });
+
+                if (conflictingFlight) {
+                    Alert.alert(
+                        '항공편 선택 불가',
+                        `같은 날짜(${new Date(targetFlight.departureTime).toLocaleDateString('ko-KR', {
+                            month: 'long',
+                            day: 'numeric'
+                        })})에 이미 선택된 항공편이 있습니다.\n\n선택된 항공편: ${conflictingFlight.airline} ${conflictingFlight.flightNumber}\n\n다른 항공편을 선택하려면 먼저 기존 항공편의 선택을 해제해주세요.`,
+                        [{ text: '확인' }]
+                    );
+                    setShowActionModal(false);
+                    setSelectedFlightId(null);
+                    return;
+                }
+            }
+
             await updateFlight(selectedFlightId, {
                 isSelected: !targetFlight.isSelected,
             });

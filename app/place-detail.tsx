@@ -50,6 +50,31 @@ export default function PlaceDetailScreen() {
     const currentDay = tripData?.days.find(day => day.dayNumber === parseInt(dayNumber || '1'));
     const place = currentDay?.places.find(p => p.id === placeId);
 
+    // 목적지에 따른 기본 통화 결정
+    const getDefaultCurrency = () => {
+        const destination = tripData?.destination?.toLowerCase() || '';
+
+        // 국가별 통화 매핑
+        if (destination.includes('일본') || destination.includes('도쿄') || destination.includes('오사카') || destination.includes('교토')) {
+            return 'JPY';
+        }
+        if (destination.includes('미국') || destination.includes('뉴욕') || destination.includes('로스앤젤레스')) {
+            return 'USD';
+        }
+        if (destination.includes('유럽') || destination.includes('파리') || destination.includes('런던') || destination.includes('로마')) {
+            return 'EUR';
+        }
+        if (destination.includes('중국') || destination.includes('베이징') || destination.includes('상하이')) {
+            return 'CNY';
+        }
+        if (destination.includes('영국')) {
+            return 'GBP';
+        }
+
+        // 기본값은 한국 원화
+        return 'KRW';
+    };
+
     // 참가자 목록 (임시로 현재 사용자 + 더미 데이터)
     // TODO: 백엔드에서 실제 참가자 목록 가져오기
     const participants = [
@@ -337,6 +362,7 @@ export default function PlaceDetailScreen() {
                     {
                         title: expenseTitle,
                         amount: parseFloat(expenseAmount),
+                        currency: getDefaultCurrency(),
                         type: expenseType,
                         memo: expenseMemo.trim() || undefined,
                     }

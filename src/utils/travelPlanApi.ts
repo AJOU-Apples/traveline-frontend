@@ -354,6 +354,71 @@ export interface UpdateFlightRequest {
     memo?: string;
 }
 
+// ============ Supply / Task DTO ============
+export interface SupplyDto {
+    id: number;
+    travelPlanId: number;
+    text: string;
+    quantity?: number;
+    unit?: string;
+    category?: string;
+    memo?: string;
+    checked: boolean;
+    checkedAt?: string;
+    orderIndex: number;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface TaskDto {
+    id: number;
+    travelPlanId: number;
+    text: string;
+    deadline?: string;
+    memo?: string;
+    checked: boolean;
+    checkedAt?: string;
+    orderIndex: number;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface CreateSupplyRequest {
+    travelPlanId: number;
+    text: string;
+    quantity?: number;
+    unit?: string;
+    category?: string;
+    memo?: string;
+    orderIndex?: number;
+}
+
+export interface CreateTaskRequest {
+    travelPlanId: number;
+    text: string;
+    deadline?: string;
+    memo?: string;
+    orderIndex?: number;
+}
+
+export interface UpdateSupplyRequest {
+    text?: string;
+    quantity?: number;
+    unit?: string;
+    category?: string;
+    memo?: string;
+    checked?: boolean;
+    orderIndex?: number;
+}
+
+export interface UpdateTaskRequest {
+    text?: string;
+    deadline?: string;
+    memo?: string;
+    checked?: boolean;
+    orderIndex?: number;
+}
+
 export interface PlaceSearchResult {
     name: string;
     address: string;
@@ -1541,6 +1606,272 @@ class TravelPlanApi {
             }
         } catch (error) {
             console.error('Delete flight error:', error);
+            throw error;
+        }
+    }
+
+    // ============ Supply API ============
+
+    // 준비물 목록 조회
+    async getSuppliesByTravelPlan(travelPlanId: number): Promise<SupplyDto[]> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${travelPlanId}/supplies`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('준비물 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get supplies error:', error);
+            throw error;
+        }
+    }
+
+    // 준비물 생성
+    async createSupply(travelPlanId: number, request: Omit<CreateSupplyRequest, 'travelPlanId'>): Promise<SupplyDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${travelPlanId}/supplies`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        ...request,
+                        travelPlanId, // URL 파라미터와 동일한 값을 body에 포함
+                    }),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '준비물 등록에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Create supply error:', error);
+            throw error;
+        }
+    }
+
+    // 준비물 수정
+    async updateSupply(supplyId: number, request: UpdateSupplyRequest): Promise<SupplyDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/supplies/${supplyId}`,
+                {
+                    method: 'PATCH',
+                    body: JSON.stringify(request),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '준비물 수정에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Update supply error:', error);
+            throw error;
+        }
+    }
+
+    // 준비물 삭제
+    async deleteSupply(supplyId: number): Promise<void> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/supplies/${supplyId}`,
+                {
+                    method: 'DELETE',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('준비물 삭제에 실패했습니다.');
+            }
+        } catch (error) {
+            console.error('Delete supply error:', error);
+            throw error;
+        }
+    }
+
+    // 준비물 순서 변경
+    async reorderSupplies(travelPlanId: number, supplyIds: number[]): Promise<void> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${travelPlanId}/supplies/reorder`,
+                {
+                    method: 'PATCH',
+                    body: JSON.stringify({ supplyIds }),
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('준비물 순서 변경에 실패했습니다.');
+            }
+        } catch (error) {
+            console.error('Reorder supplies error:', error);
+            throw error;
+        }
+    }
+
+    // 준비물 기본 템플릿 초기화
+    async initializeSupplies(travelPlanId: number): Promise<SupplyDto[]> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${travelPlanId}/supplies/initialize`,
+                {
+                    method: 'POST',
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '준비물 초기화에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Initialize supplies error:', error);
+            throw error;
+        }
+    }
+
+    // ============ Task API ============
+
+    // 체크리스트 목록 조회
+    async getTasksByTravelPlan(travelPlanId: number): Promise<TaskDto[]> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${travelPlanId}/tasks`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('체크리스트 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get tasks error:', error);
+            throw error;
+        }
+    }
+
+    // 체크리스트 생성
+    async createTask(travelPlanId: number, request: Omit<CreateTaskRequest, 'travelPlanId'>): Promise<TaskDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${travelPlanId}/tasks`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        ...request,
+                        travelPlanId, // URL 파라미터와 동일한 값을 body에 포함
+                    }),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '체크리스트 등록에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Create task error:', error);
+            throw error;
+        }
+    }
+
+    // 체크리스트 수정
+    async updateTask(taskId: number, request: UpdateTaskRequest): Promise<TaskDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/tasks/${taskId}`,
+                {
+                    method: 'PATCH',
+                    body: JSON.stringify(request),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '체크리스트 수정에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Update task error:', error);
+            throw error;
+        }
+    }
+
+    // 체크리스트 삭제
+    async deleteTask(taskId: number): Promise<void> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/tasks/${taskId}`,
+                {
+                    method: 'DELETE',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('체크리스트 삭제에 실패했습니다.');
+            }
+        } catch (error) {
+            console.error('Delete task error:', error);
+            throw error;
+        }
+    }
+
+    // 체크리스트 순서 변경
+    async reorderTasks(travelPlanId: number, taskIds: number[]): Promise<void> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${travelPlanId}/tasks/reorder`,
+                {
+                    method: 'PATCH',
+                    body: JSON.stringify({ taskIds }),
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('체크리스트 순서 변경에 실패했습니다.');
+            }
+        } catch (error) {
+            console.error('Reorder tasks error:', error);
+            throw error;
+        }
+    }
+
+    // 체크리스트 기본 템플릿 초기화
+    async initializeTasks(travelPlanId: number): Promise<TaskDto[]> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${travelPlanId}/tasks/initialize`,
+                {
+                    method: 'POST',
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '체크리스트 초기화에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Initialize tasks error:', error);
             throw error;
         }
     }

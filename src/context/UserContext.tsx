@@ -179,6 +179,34 @@ export type Accommodation = {
   updatedAt: string;
 };
 
+export type Supply = {
+  id: string;
+  travelPlanId: string;
+  text: string;
+  quantity?: number;
+  unit?: string;
+  category?: string;
+  memo?: string;
+  checked: boolean;
+  checkedAt?: string;
+  orderIndex: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Task = {
+  id: string;
+  travelPlanId: string;
+  text: string;
+  deadline?: string;
+  memo?: string;
+  checked: boolean;
+  checkedAt?: string;
+  orderIndex: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type TravelPlan = {
   id: string;
   title: string;
@@ -302,6 +330,7 @@ type UserContextValue = {
     expenseTime?: string;
   }) => Promise<Expense>;
   getExpensesByPlace: (placeId: string) => Promise<Expense[]>;
+  getExpensesByPlan: (planId: string, type?: 'PERSONAL' | 'SHARED') => Promise<{ expenses: Expense[]; summary: { totalAmount: number; totalPersonal: number; totalShared: number; expenseCount: number } }>;
   updateExpense: (expenseId: string, updates: {
     title?: string;
     amount?: number;
@@ -330,6 +359,16 @@ type UserContextValue = {
   createAccommodation: (planId: string, accommodation: Omit<Accommodation, 'id' | 'travelPlanId' | 'createdAt' | 'updatedAt'>) => Promise<Accommodation>;
   updateAccommodation: (accommodationId: string, updates: Partial<Accommodation>) => Promise<Accommodation>;
   deleteAccommodation: (accommodationId: string) => Promise<void>;
+  // Supply methods
+  getSuppliesByPlan: (planId: string) => Promise<Supply[]>;
+  createSupply: (planId: string, supply: Omit<Supply, 'id' | 'travelPlanId' | 'createdAt' | 'updatedAt'>) => Promise<Supply>;
+  updateSupply: (supplyId: string, updates: Partial<Supply>) => Promise<Supply>;
+  deleteSupply: (supplyId: string) => Promise<void>;
+  // Task methods
+  getTasksByPlan: (planId: string) => Promise<Task[]>;
+  createTask: (planId: string, task: Omit<Task, 'id' | 'travelPlanId' | 'createdAt' | 'updatedAt'>) => Promise<Task>;
+  updateTask: (taskId: string, updates: Partial<Task>) => Promise<Task>;
+  deleteTask: (taskId: string) => Promise<void>;
 };
 
 const defaultTrips: Trip[] = [
@@ -479,6 +518,24 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
 
   const upcomingTrip = useMemo(() => trips[0], [trips]);
 
+  // 기본 준비물 템플릿
+  const DEFAULT_SUPPLIES = [
+    { text: '여권 및 여권 사본' },
+    { text: '현금 및 해외 결제 카드' },
+    { text: '충전기' },
+    { text: '멀티 어댑터(돼지코)' },
+    { text: '상비약' },
+    { text: '칫솔, 치약' },
+  ];
+
+  // 기본 체크리스트 템플릿
+  const DEFAULT_CHECKLIST = [
+    { text: '여권 만료일 확인하기' },
+    { text: '여행자 보험 가입하기' },
+    { text: '수하물 무게 확인하기' },
+    { text: '액체 100ml 규정 확인하기' },
+  ];
+
   const addTravelPlan = async (plan: Omit<TravelPlan, 'id'>): Promise<string> => {
     if (!authUser) {
       throw new Error('로그인이 필요합니다.');
@@ -500,6 +557,33 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
 
       const createdPlan = await travelPlanApi.createTravelPlan(apiData);
       const convertedPlan = convertTravelPlanFromDto(createdPlan);
+
+      // 여행 생성 후 기본 준비물/체크리스트 초기화 (FE에서 직접 생성)
+      try {
+        console.log('Initializing default supplies and tasks...');
+
+        // 기본 준비물 생성
+        const supplyPromises = DEFAULT_SUPPLIES.map((supply, index) =>
+          travelPlanApi.createSupply(createdPlan.id, {
+            text: supply.text,
+            orderIndex: index,
+          })
+        );
+
+        // 기본 체크리스트 생성
+        const taskPromises = DEFAULT_CHECKLIST.map((task, index) =>
+          travelPlanApi.createTask(createdPlan.id, {
+            text: task.text,
+            orderIndex: index,
+          })
+        );
+
+        await Promise.all([...supplyPromises, ...taskPromises]);
+        console.log('Successfully initialized default supplies and tasks');
+      } catch (initError) {
+        console.error('Failed to initialize supplies/tasks:', initError);
+        // 초기화 실패해도 여행 생성은 성공으로 처리
+      }
 
       setTravelPlans((prev) => [...prev, convertedPlan]);
       return convertedPlan.id;
@@ -1168,6 +1252,47 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     }
   };
 
+  const getExpensesByPlan = async (planId: string, type?: 'PERSONAL' | 'SHARED') => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const result = await travelPlanApi.getExpensesByTravelPlan(parseInt(planId), type);
+
+      const convertedExpenses = result.expenses.map((expense) => ({
+        id: expense.id.toString(),
+        travelPlanId: expense.travelPlanId.toString(),
+        travelDayId: expense.travelDayId?.toString(),
+        dayNumber: expense.dayNumber,
+        placeId: expense.placeId?.toString(),
+        paidById: expense.paidById.toString(),
+        paidByName: expense.paidByName,
+        title: expense.title,
+        amount: expense.amount,
+        currency: expense.currency,
+        type: expense.type,
+        splitWith: expense.splitWith?.map((id) => id.toString()),
+        splitAmount: expense.splitAmount,
+        isSettled: expense.isSettled,
+        receiptImage: expense.receiptImage,
+        memo: expense.memo,
+        expenseDate: expense.expenseDate,
+        expenseTime: expense.expenseTime,
+        createdAt: expense.createdAt,
+        updatedAt: expense.updatedAt,
+      }));
+
+      return {
+        expenses: convertedExpenses,
+        summary: result.summary,
+      };
+    } catch (error) {
+      console.error('Failed to get expenses by plan:', error);
+      throw error;
+    }
+  };
+
   const updateExpense = async (expenseId: string, updates: {
     title?: string;
     amount?: number;
@@ -1789,6 +1914,220 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     }
   };
 
+  // Supply methods
+  const getSuppliesByPlan = async (planId: string): Promise<Supply[]> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const supplies = await travelPlanApi.getSuppliesByTravelPlan(parseInt(planId));
+      return supplies.map((supply) => ({
+        id: supply.id.toString(),
+        travelPlanId: supply.travelPlanId.toString(),
+        text: supply.text,
+        quantity: supply.quantity,
+        unit: supply.unit,
+        category: supply.category,
+        memo: supply.memo,
+        checked: supply.checked,
+        checkedAt: supply.checkedAt,
+        orderIndex: supply.orderIndex,
+        createdAt: supply.createdAt,
+        updatedAt: supply.updatedAt,
+      }));
+    } catch (error) {
+      console.error('Failed to get supplies:', error);
+      throw error;
+    }
+  };
+
+  const createSupply = async (planId: string, supply: Omit<Supply, 'id' | 'travelPlanId' | 'createdAt' | 'updatedAt'>): Promise<Supply> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const createdSupply = await travelPlanApi.createSupply(parseInt(planId), {
+        text: supply.text,
+        quantity: supply.quantity,
+        unit: supply.unit,
+        category: supply.category,
+        memo: supply.memo,
+        orderIndex: supply.orderIndex,
+      });
+
+      return {
+        id: createdSupply.id.toString(),
+        travelPlanId: createdSupply.travelPlanId.toString(),
+        text: createdSupply.text,
+        quantity: createdSupply.quantity,
+        unit: createdSupply.unit,
+        category: createdSupply.category,
+        memo: createdSupply.memo,
+        checked: createdSupply.checked,
+        checkedAt: createdSupply.checkedAt,
+        orderIndex: createdSupply.orderIndex,
+        createdAt: createdSupply.createdAt,
+        updatedAt: createdSupply.updatedAt,
+      };
+    } catch (error) {
+      console.error('Failed to create supply:', error);
+      throw error;
+    }
+  };
+
+  const updateSupply = async (supplyId: string, updates: Partial<Supply>): Promise<Supply> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const updatedSupply = await travelPlanApi.updateSupply(parseInt(supplyId), {
+        text: updates.text,
+        quantity: updates.quantity,
+        unit: updates.unit,
+        category: updates.category,
+        memo: updates.memo,
+        checked: updates.checked,
+        orderIndex: updates.orderIndex,
+      });
+
+      return {
+        id: updatedSupply.id.toString(),
+        travelPlanId: updatedSupply.travelPlanId.toString(),
+        text: updatedSupply.text,
+        quantity: updatedSupply.quantity,
+        unit: updatedSupply.unit,
+        category: updatedSupply.category,
+        memo: updatedSupply.memo,
+        checked: updatedSupply.checked,
+        checkedAt: updatedSupply.checkedAt,
+        orderIndex: updatedSupply.orderIndex,
+        createdAt: updatedSupply.createdAt,
+        updatedAt: updatedSupply.updatedAt,
+      };
+    } catch (error) {
+      console.error('Failed to update supply:', error);
+      throw error;
+    }
+  };
+
+  const deleteSupply = async (supplyId: string): Promise<void> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      await travelPlanApi.deleteSupply(parseInt(supplyId));
+    } catch (error) {
+      console.error('Failed to delete supply:', error);
+      throw error;
+    }
+  };
+
+  // Task methods
+  const getTasksByPlan = async (planId: string): Promise<Task[]> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const tasks = await travelPlanApi.getTasksByTravelPlan(parseInt(planId));
+      return tasks.map((task) => ({
+        id: task.id.toString(),
+        travelPlanId: task.travelPlanId.toString(),
+        text: task.text,
+        deadline: task.deadline,
+        memo: task.memo,
+        checked: task.checked,
+        checkedAt: task.checkedAt,
+        orderIndex: task.orderIndex,
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+      }));
+    } catch (error) {
+      console.error('Failed to get tasks:', error);
+      throw error;
+    }
+  };
+
+  const createTask = async (planId: string, task: Omit<Task, 'id' | 'travelPlanId' | 'createdAt' | 'updatedAt'>): Promise<Task> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const createdTask = await travelPlanApi.createTask(parseInt(planId), {
+        text: task.text,
+        deadline: task.deadline,
+        memo: task.memo,
+        orderIndex: task.orderIndex,
+      });
+
+      return {
+        id: createdTask.id.toString(),
+        travelPlanId: createdTask.travelPlanId.toString(),
+        text: createdTask.text,
+        deadline: createdTask.deadline,
+        memo: createdTask.memo,
+        checked: createdTask.checked,
+        checkedAt: createdTask.checkedAt,
+        orderIndex: createdTask.orderIndex,
+        createdAt: createdTask.createdAt,
+        updatedAt: createdTask.updatedAt,
+      };
+    } catch (error) {
+      console.error('Failed to create task:', error);
+      throw error;
+    }
+  };
+
+  const updateTask = async (taskId: string, updates: Partial<Task>): Promise<Task> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      const updatedTask = await travelPlanApi.updateTask(parseInt(taskId), {
+        text: updates.text,
+        deadline: updates.deadline,
+        memo: updates.memo,
+        checked: updates.checked,
+        orderIndex: updates.orderIndex,
+      });
+
+      return {
+        id: updatedTask.id.toString(),
+        travelPlanId: updatedTask.travelPlanId.toString(),
+        text: updatedTask.text,
+        deadline: updatedTask.deadline,
+        memo: updatedTask.memo,
+        checked: updatedTask.checked,
+        checkedAt: updatedTask.checkedAt,
+        orderIndex: updatedTask.orderIndex,
+        createdAt: updatedTask.createdAt,
+        updatedAt: updatedTask.updatedAt,
+      };
+    } catch (error) {
+      console.error('Failed to update task:', error);
+      throw error;
+    }
+  };
+
+  const deleteTask = async (taskId: string): Promise<void> => {
+    if (!authUser) {
+      throw new Error('로그인이 필요합니다.');
+    }
+
+    try {
+      await travelPlanApi.deleteTask(parseInt(taskId));
+    } catch (error) {
+      console.error('Failed to delete task:', error);
+      throw error;
+    }
+  };
+
   const value: UserContextValue = {
     username,
     authUser,
@@ -1815,6 +2154,7 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     updatePlaceMemo,
     createExpense,
     getExpensesByPlace,
+    getExpensesByPlan,
     updateExpense,
     deleteExpense,
     createMemo,
@@ -1830,6 +2170,14 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
     createAccommodation,
     updateAccommodation,
     deleteAccommodation,
+    getSuppliesByPlan,
+    createSupply,
+    updateSupply,
+    deleteSupply,
+    getTasksByPlan,
+    createTask,
+    updateTask,
+    deleteTask,
   };
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;
