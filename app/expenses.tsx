@@ -1,5 +1,6 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, RefreshControl } from 'react-native';
+import React, { useState, useCallback, useRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, RefreshControl, Animated, PanResponder, Dimensions } from 'react-native';
+import type { PanResponderGestureState } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useUser, type Expense } from '../src/context/UserContext';
@@ -8,6 +9,14 @@ type DayExpenses = {
     dayNumber: number;
     date: string;
     expenses: Expense[];
+};
+
+const WINDOW_HEIGHT = Dimensions.get('window').height;
+const SETTLEMENT_COLLAPSED_HEIGHT = 220;
+const SETTLEMENT_EXPANDED_HEIGHT = Math.min(WINDOW_HEIGHT * 0.7, 480);
+
+const clamp = (value: number, min: number, max: number) => {
+    return Math.min(Math.max(value, min), max);
 };
 
 export default function ExpensesScreen() {
@@ -24,6 +33,59 @@ export default function ExpensesScreen() {
     const [isLoading, setIsLoading] = useState(false);
 
     const travelPlan = getTravelPlan(planId);
+
+    const sheetHeight = useRef(new Animated.Value(SETTLEMENT_COLLAPSED_HEIGHT)).current;
+    const sheetHeightValue = useRef(SETTLEMENT_COLLAPSED_HEIGHT);
+    const dragStartHeight = useRef(SETTLEMENT_COLLAPSED_HEIGHT);
+
+    const animateSheetTo = useCallback((targetHeight: number) => {
+        sheetHeightValue.current = targetHeight;
+        Animated.spring(sheetHeight, {
+            toValue: targetHeight,
+            useNativeDriver: false,
+            tension: 160,
+            friction: 22,
+        }).start();
+    }, [sheetHeight]);
+
+    const handleSheetRelease = useCallback((gestureState: PanResponderGestureState) => {
+        const nextHeight = clamp(
+            dragStartHeight.current - gestureState.dy,
+            SETTLEMENT_COLLAPSED_HEIGHT,
+            SETTLEMENT_EXPANDED_HEIGHT,
+        );
+        const threshold = (SETTLEMENT_COLLAPSED_HEIGHT + SETTLEMENT_EXPANDED_HEIGHT) / 2;
+        const finalHeight = nextHeight > threshold ? SETTLEMENT_EXPANDED_HEIGHT : SETTLEMENT_COLLAPSED_HEIGHT;
+        animateSheetTo(finalHeight);
+    }, [animateSheetTo]);
+
+    const panResponder = React.useMemo(() => PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 5,
+        onPanResponderGrant: () => {
+            dragStartHeight.current = sheetHeightValue.current;
+        },
+        onPanResponderMove: (_, gestureState) => {
+            const nextHeight = clamp(
+                dragStartHeight.current - gestureState.dy,
+                SETTLEMENT_COLLAPSED_HEIGHT,
+                SETTLEMENT_EXPANDED_HEIGHT,
+            );
+            sheetHeight.setValue(nextHeight);
+            sheetHeightValue.current = nextHeight;
+        },
+        onPanResponderRelease: (_, gestureState) => {
+            handleSheetRelease(gestureState);
+        },
+        onPanResponderTerminate: (_, gestureState) => {
+            handleSheetRelease(gestureState);
+        },
+    }), [handleSheetRelease, sheetHeight]);
+
+    React.useEffect(() => {
+        if (selectedTab === '정산표') {
+            animateSheetTo(SETTLEMENT_COLLAPSED_HEIGHT);
+        }
+    }, [selectedTab, animateSheetTo]);
 
     // 자신의 총 지출 금액 계산 (개인 지출 + 공용 지출)
     const myTotalExpensesByCurrency = React.useMemo(() => {
@@ -44,6 +106,214 @@ export default function ExpensesScreen() {
 
         return totalsByCurrency;
     }, [expenses, authUser]);
+
+    const memberNameMap = React.useMemo(() => {
+        const map: Record<string, string> = {};
+
+        travelPlan?.members?.forEach((member) => {
+            map[member.userId] = member.username;
+        });
+
+        if (authUser) {
+            map[authUser.id.toString()] = authUser.username;
+        }
+
+        return map;
+    }, [travelPlan?.members, authUser]);
+
+    const sharedExpenses = React.useMemo(() => {
+        return expenses.filter((expense) => expense.type === 'SHARED');
+    }, [expenses]);
+
+    const sharedExpenseGroups = React.useMemo(() => {
+        const groups = new Map<string, {
+            payerId: string;
+            payerName: string;
+            currency: string;
+            expenses: Expense[];
+            totalAmount: number;
+        }>();
+
+        sharedExpenses.forEach((expense) => {
+            const currency = expense.currency || 'KRW';
+            const key = `${expense.paidById}-${currency}`;
+            const payerName = memberNameMap[expense.paidById] || expense.paidByName || '알 수 없음';
+
+            if (!groups.has(key)) {
+                groups.set(key, {
+                    payerId: expense.paidById,
+                    payerName,
+                    currency,
+                    expenses: [],
+                    totalAmount: 0,
+                });
+            }
+
+            const group = groups.get(key)!;
+            group.expenses.push(expense);
+            group.totalAmount += expense.amount;
+        });
+
+        return Array.from(groups.values()).map((group) => ({
+            ...group,
+            expenses: [...group.expenses].sort((a, b) => {
+                const dateA = a.expenseDate || a.createdAt;
+                const dateB = b.expenseDate || b.createdAt;
+                return (dateB || '').localeCompare(dateA || '');
+            }),
+        })).sort((a, b) => a.payerName.localeCompare(b.payerName, 'ko'));
+    }, [sharedExpenses, memberNameMap]);
+
+    const settlementSummary = React.useMemo(() => {
+        const ledgerByCurrency: Record<string, Record<string, {
+            memberId: string;
+            name: string;
+            paid: number;
+            shouldPay: number;
+        }>> = {};
+        const totalByCurrency: Record<string, number> = {};
+        const participantsByCurrency: Record<string, Set<string>> = {};
+
+        sharedExpenses.forEach((expense) => {
+            const currency = expense.currency || 'KRW';
+            const payerId = expense.paidById;
+            const payerName = memberNameMap[payerId] || expense.paidByName || '알 수 없음';
+
+            if (!ledgerByCurrency[currency]) {
+                ledgerByCurrency[currency] = {};
+            }
+            if (!totalByCurrency[currency]) {
+                totalByCurrency[currency] = 0;
+            }
+            if (!participantsByCurrency[currency]) {
+                participantsByCurrency[currency] = new Set();
+            }
+
+            totalByCurrency[currency] += expense.amount;
+
+            if (!ledgerByCurrency[currency][payerId]) {
+                ledgerByCurrency[currency][payerId] = {
+                    memberId: payerId,
+                    name: payerName,
+                    paid: 0,
+                    shouldPay: 0,
+                };
+            }
+            ledgerByCurrency[currency][payerId].paid += expense.amount;
+            participantsByCurrency[currency].add(payerId);
+
+            const defaultParticipants = travelPlan?.members?.map((member) => member.userId) || [];
+            const splitTargets = (expense.splitWith && expense.splitWith.length > 0)
+                ? expense.splitWith
+                : defaultParticipants;
+            const participantIds = Array.from(new Set([payerId, ...splitTargets]));
+
+            if (participantIds.length === 0) {
+                participantIds.push(payerId);
+            }
+
+            const perShare = expense.splitAmount ?? (expense.amount / participantIds.length);
+
+            participantIds.forEach((participantId) => {
+                const name = memberNameMap[participantId]
+                    || travelPlan?.members?.find((member) => member.userId === participantId)?.name
+                    || (participantId === payerId ? payerName : '')
+                    || '알 수 없음';
+
+                if (!ledgerByCurrency[currency][participantId]) {
+                    ledgerByCurrency[currency][participantId] = {
+                        memberId: participantId,
+                        name,
+                        paid: 0,
+                        shouldPay: 0,
+                    };
+                } else if (!ledgerByCurrency[currency][participantId].name) {
+                    ledgerByCurrency[currency][participantId].name = name;
+                }
+
+                ledgerByCurrency[currency][participantId].shouldPay += perShare;
+                participantsByCurrency[currency].add(participantId);
+            });
+        });
+
+        const perPersonShare: Record<string, number> = {};
+        Object.entries(totalByCurrency).forEach(([currency, total]) => {
+            const participantCount = participantsByCurrency[currency]?.size || 0;
+            if (participantCount > 0) {
+                perPersonShare[currency] = total / participantCount;
+            }
+        });
+
+        const instructions: { currency: string; from: string; to: string; amount: number }[] = [];
+
+        Object.entries(ledgerByCurrency).forEach(([currency, ledger]) => {
+            const payers: { memberId: string; name: string; amount: number }[] = [];
+            const receivers: { memberId: string; name: string; amount: number }[] = [];
+
+            Object.values(ledger).forEach((entry) => {
+                const net = entry.paid - entry.shouldPay;
+                if (Math.abs(net) < 1e-2) {
+                    return;
+                }
+                if (net > 0) {
+                    receivers.push({
+                        memberId: entry.memberId,
+                        name: entry.name || memberNameMap[entry.memberId] || '알 수 없음',
+                        amount: net,
+                    });
+                } else {
+                    payers.push({
+                        memberId: entry.memberId,
+                        name: entry.name || memberNameMap[entry.memberId] || '알 수 없음',
+                        amount: -net,
+                    });
+                }
+            });
+
+            let payerIndex = 0;
+            let receiverIndex = 0;
+
+            while (payerIndex < payers.length && receiverIndex < receivers.length) {
+                const payer = payers[payerIndex];
+                const receiver = receivers[receiverIndex];
+                const amount = Math.min(payer.amount, receiver.amount);
+
+                if (amount > 1e-2) {
+                    instructions.push({
+                        currency,
+                        from: payer.name,
+                        to: receiver.name,
+                        amount,
+                    });
+                }
+
+                payer.amount -= amount;
+                receiver.amount -= amount;
+
+                if (payer.amount <= 1e-2) {
+                    payerIndex += 1;
+                }
+                if (receiver.amount <= 1e-2) {
+                    receiverIndex += 1;
+                }
+            }
+        });
+
+        return {
+            totalByCurrency,
+            perPersonShare,
+            instructions,
+        };
+    }, [sharedExpenses, travelPlan?.members, memberNameMap]);
+
+    const formatExpenseDate = (dateString?: string) => {
+        if (!dateString) return '';
+        const date = new Date(dateString);
+        if (Number.isNaN(date.getTime())) return '';
+        const month = date.getMonth() + 1;
+        const day = date.getDate();
+        return `${month}월 ${day}일`;
+    };
 
     // 데이터 로드
     const loadExpenses = useCallback(async () => {
@@ -292,8 +562,104 @@ export default function ExpensesScreen() {
                 </>
             ) : (
                 /* 정산표 탭 */
-                <View style={styles.comingSoonContainer}>
-                    <Text style={styles.comingSoonText}>정산표는 추후 구현 예정입니다</Text>
+                <View style={styles.settlementContainer}>
+                    <ScrollView
+                        style={styles.settlementContent}
+                        contentContainerStyle={[
+                            styles.settlementContentContainer,
+                            { paddingBottom: SETTLEMENT_COLLAPSED_HEIGHT + 32 },
+                        ]}
+                        showsVerticalScrollIndicator={false}
+                    >
+                        {sharedExpenseGroups.map((group) => (
+                            <View key={`${group.payerId}-${group.currency}`} style={styles.settlementSection}>
+                                <View style={styles.settlementBadge}>
+                                    <Text style={styles.settlementBadgeText}>
+                                        {group.payerName} 님 결제
+                                    </Text>
+                                </View>
+                                {group.expenses.map((expense) => (
+                                    <View key={expense.id} style={styles.settlementItem}>
+                                        <View style={styles.settlementItemRow}>
+                                            <Text style={styles.settlementItemTitle}>{expense.title}</Text>
+                                            <Text style={styles.settlementItemAmount}>
+                                                -{formatAmount(expense.amount, expense.currency)}
+                                            </Text>
+                                        </View>
+                                        <View style={styles.settlementItemSubRow}>
+                                            <Text style={styles.settlementItemSubtitle}>
+                                                {getPlaceName(expense.placeId)}
+                                            </Text>
+                                            <Text style={styles.settlementItemDate}>
+                                                {formatExpenseDate(expense.expenseDate || expense.createdAt)}
+                                            </Text>
+                                        </View>
+                                    </View>
+                                ))}
+                                <View style={styles.settlementTotalRow}>
+                                    <Text style={styles.settlementTotalLabel}>총 지출 금액</Text>
+                                    <Text style={styles.settlementTotalAmount}>
+                                        {formatAmount(group.totalAmount, group.currency)}
+                                    </Text>
+                                </View>
+                            </View>
+                        ))}
+
+                        {sharedExpenseGroups.length === 0 && (
+                            <View style={styles.emptyState}>
+                                <Text style={styles.emptyStateText}>공용 지출이 없습니다</Text>
+                            </View>
+                        )}
+                    </ScrollView>
+
+                    <Animated.View style={[styles.settlementSheet, { height: sheetHeight }]}>
+                        <View style={styles.settlementHandleArea} {...panResponder.panHandlers}>
+                            <View style={styles.settlementHandle} />
+                        </View>
+                        <ScrollView
+                            style={styles.settlementSheetScroll}
+                            contentContainerStyle={styles.settlementSheetScrollContent}
+                            showsVerticalScrollIndicator={false}
+                        >
+                            <View style={styles.settlementPerPerson}>
+                                <Text style={styles.settlementPerPersonLabel}>1인당 부담</Text>
+                                <View style={styles.settlementPerPersonAmountContainer}>
+                                    {Object.entries(settlementSummary.perPersonShare).length > 0 ? (
+                                        Object.entries(settlementSummary.perPersonShare).map(([currency, amount]) => (
+                                            <Text key={currency} style={styles.settlementPerPersonAmount}>
+                                                {formatAmount(amount, currency)}
+                                            </Text>
+                                        ))
+                                    ) : (
+                                        <Text style={styles.settlementPerPersonAmount}>
+                                            {formatAmount(0)}
+                                        </Text>
+                                    )}
+                                </View>
+                            </View>
+
+                            <View style={styles.settlementResultSection}>
+                                <Text style={styles.settlementResultLabel}>정산 결과</Text>
+                                {settlementSummary.instructions.length > 0 ? (
+                                    settlementSummary.instructions.map((instruction, index) => (
+                                        <View
+                                            key={`${instruction.from}-${instruction.to}-${instruction.currency}-${index}`}
+                                            style={styles.settlementResultRow}
+                                        >
+                                            <Text style={styles.settlementResultText}>
+                                                {instruction.from} → {instruction.to}
+                                            </Text>
+                                            <Text style={styles.settlementResultAmount}>
+                                                {formatAmount(instruction.amount, instruction.currency)}
+                                            </Text>
+                                        </View>
+                                    ))
+                                ) : (
+                                    <Text style={styles.settlementResultEmptyText}>정산할 내역이 없습니다</Text>
+                                )}
+                            </View>
+                        </ScrollView>
+                    </Animated.View>
                 </View>
             )}
         </View>
@@ -494,13 +860,180 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         color: '#000',
     },
-    comingSoonContainer: {
+    settlementContainer: {
         flex: 1,
-        justifyContent: 'center',
+        backgroundColor: '#F6F6F6',
+    },
+    settlementContent: {
+        flex: 1,
+        paddingHorizontal: 20,
+    },
+    settlementContentContainer: {
+        paddingBottom: 32,
+    },
+    settlementSection: {
+        backgroundColor: '#fff',
+        borderRadius: 16,
+        paddingHorizontal: 16,
+        paddingVertical: 20,
+        marginBottom: 20,
+        shadowColor: '#000',
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 2 },
+        elevation: 2,
+    },
+    settlementBadge: {
+        backgroundColor: '#088CDA',
+        alignSelf: 'flex-start',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 12,
+        marginBottom: 16,
+    },
+    settlementBadgeText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#fff',
+    },
+    settlementItem: {
+        marginBottom: 16,
+    },
+    settlementItemRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 4,
+    },
+    settlementItemTitle: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#000',
+        flex: 1,
+        marginRight: 12,
+        lineHeight: 20,
+    },
+    settlementItemAmount: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#000',
+    },
+    settlementItemSubRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
         alignItems: 'center',
     },
-    comingSoonText: {
-        fontSize: 17,
+    settlementItemSubtitle: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#585858',
+        flex: 1,
+        marginRight: 12,
+    },
+    settlementItemDate: {
+        fontSize: 13,
+        fontWeight: '500',
+        color: '#9E9E9E',
+    },
+    settlementTotalRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 12,
+        paddingTop: 12,
+        borderTopWidth: 1,
+        borderTopColor: '#F0F0F0',
+    },
+    settlementTotalLabel: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#000',
+    },
+    settlementTotalAmount: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: '#000',
+    },
+    settlementHandle: {
+        width: 60,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: '#D9D9D9',
+    },
+    settlementSheet: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: '#fff',
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOpacity: 0.1,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: -2 },
+        elevation: 6,
+    },
+    settlementHandleArea: {
+        alignItems: 'center',
+        paddingTop: 12,
+        paddingBottom: 8,
+    },
+    settlementSheetScroll: {
+        flex: 1,
+        paddingHorizontal: 20,
+    },
+    settlementSheetScrollContent: {
+        paddingBottom: 24,
+        gap: 20,
+    },
+    settlementPerPerson: {
+        marginBottom: 20,
+        gap: 8,
+    },
+    settlementPerPersonLabel: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#000',
+    },
+    settlementPerPersonAmountContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    settlementPerPersonAmount: {
+        fontSize: 22,
+        fontWeight: '700',
+        color: '#000',
+    },
+    settlementResultSection: {
+        gap: 12,
+    },
+    settlementResultLabel: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#000',
+    },
+    settlementResultRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    settlementResultText: {
+        fontSize: 15,
+        fontWeight: '500',
+        color: '#000',
+        flex: 1,
+        marginRight: 12,
+    },
+    settlementResultAmount: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#088CDA',
+    },
+    settlementResultEmptyText: {
+        fontSize: 14,
         color: '#9E9E9E',
     },
 });

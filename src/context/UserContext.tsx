@@ -324,23 +324,29 @@ const convertTravelPlanFromDto = (dto: TravelPlanDto): TravelPlan => {
       })) || [], // places가 없으면 빈 배열로 처리
     })),
     // 멤버 정보 추가
-    members: dto.members?.map(member => ({
-      id: member.id.toString(),
-      userId: member.userId.toString(),
-      username: member.username,
-      name: member.name, // 실제 사용자 이름
-      email: member.email,
-      profileImage: member.profileImage,
-      role: member.role,
-      status: member.status,
-      joinedAt: member.joinedAt,
-      invitedAt: member.invitedAt,
-      invitedBy: member.invitedBy ? {
-        id: member.invitedBy.id.toString(),
-        username: member.invitedBy.username,
-      } : undefined,
-      invitedByName: member.invitedByName,
-    })),
+    members: dto.members?.map((member, index) => {
+      const fallbackKey = member.email || member.username || `index-${index}`;
+      const safeId = member.id != null ? member.id.toString() : `pending-${fallbackKey}`;
+      const safeUserId = member.userId != null ? member.userId.toString() : `pending-user-${fallbackKey}`;
+
+      return {
+        id: safeId,
+        userId: safeUserId,
+        username: member.username,
+        name: member.name, // 실제 사용자 이름
+        email: member.email,
+        profileImage: member.profileImage,
+        role: member.role,
+        status: member.status,
+        joinedAt: member.joinedAt,
+        invitedAt: member.invitedAt,
+        invitedBy: member.invitedBy ? {
+          id: member.invitedBy.id != null ? member.invitedBy.id.toString() : `pending-${fallbackKey}`,
+          username: member.invitedBy.username,
+        } : undefined,
+        invitedByName: member.invitedByName,
+      };
+    }),
     myRole: dto.myRole,
   };
 };
@@ -1379,7 +1385,7 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
         parseInt(expenseId),
         {
           ...updates,
-        paidById: updates.paidById ? parseInt(updates.paidById) : undefined,
+          paidById: updates.paidById ? parseInt(updates.paidById) : undefined,
           splitWith: updates.splitWith?.map((id) => parseInt(id)),
         }
       );
