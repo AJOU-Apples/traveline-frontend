@@ -7,7 +7,7 @@ import { Calendar, DateData } from 'react-native-calendars';
 import { useUser, TravelDay } from '../src/context/UserContext';
 
 export default function DateSelectionScreen() {
-    const { destination } = useLocalSearchParams<{ destination: string }>();
+    const { destinationId, destinationName } = useLocalSearchParams<{ destinationId: string; destinationName: string }>();
     const { addTravelPlan } = useUser();
     const [startDate, setStartDate] = useState<string | null>(null);
     const [endDate, setEndDate] = useState<string | null>(null);
@@ -89,50 +89,56 @@ export default function DateSelectionScreen() {
         return marked;
     };
 
-    const handleConfirm = () => {
-        if (startDate && endDate && destination) {
-            // 날짜 사이의 일수 계산
-            const start = new Date(startDate);
-            const end = new Date(endDate);
-            const dayCount = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const handleConfirm = async () => {
+        if (startDate && endDate && destinationId && destinationName) {
+            try {
+                // 날짜 사이의 일수 계산
+                const start = new Date(startDate);
+                const end = new Date(endDate);
+                const dayCount = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
-            // 일차별 데이터 생성
-            const days: TravelDay[] = [];
-            for (let i = 0; i < dayCount; i++) {
-                const currentDate = new Date(start);
-                currentDate.setDate(start.getDate() + i);
+                // 일차별 데이터 생성
+                const days: TravelDay[] = [];
+                for (let i = 0; i < dayCount; i++) {
+                    const currentDate = new Date(start);
+                    currentDate.setDate(start.getDate() + i);
 
-                const dateString = currentDate.toISOString().split('T')[0];
-                const month = currentDate.getMonth() + 1;
-                const day = currentDate.getDate();
-                const weekday = ['일', '월', '화', '수', '목', '금', '토'][currentDate.getDay()];
+                    const dateString = currentDate.toISOString().split('T')[0];
+                    const month = currentDate.getMonth() + 1;
+                    const day = currentDate.getDate();
+                    const weekday = ['일', '월', '화', '수', '목', '금', '토'][currentDate.getDay()];
 
-                days.push({
-                    id: `day_${i + 1}`,
-                    dayNumber: i + 1,
-                    date: dateString,
-                    displayDate: `${month}월 ${day}일(${weekday})`,
-                    places: [],
+                    days.push({
+                        id: `day_${i + 1}`,
+                        dayNumber: i + 1,
+                        date: dateString,
+                        displayDate: `${month}월 ${day}일(${weekday})`,
+                        places: [],
+                    });
+                }
+
+                // 여행 계획 생성
+                const planId = await addTravelPlan({
+                    title: `${destinationName} 여행`,
+                    destination: destinationName,
+                    destinationId: parseInt(destinationId),
+                    startDate: formatDate(startDate),
+                    endDate: formatDate(endDate),
+                    participants: 1,
+                    days,
                 });
+
+                console.log('Created travel plan:', { planId, destinationId, destinationName, startDate, endDate });
+
+                // 여행 계획 상세 화면으로 이동
+                router.push({
+                    pathname: '/plan-detail',
+                    params: { planId }
+                });
+            } catch (error) {
+                console.error('Failed to create travel plan:', error);
+                alert('여행 계획 생성 중 오류가 발생했습니다.');
             }
-
-            // 여행 계획 생성
-            const planId = addTravelPlan({
-                title: `${destination} 여행`,
-                destination,
-                startDate: formatDate(startDate),
-                endDate: formatDate(endDate),
-                participants: 1,
-                days,
-            });
-
-            console.log('Created travel plan:', { planId, destination, startDate, endDate });
-
-            // 여행 계획 상세 화면으로 이동
-            router.push({
-                pathname: '/plan-detail',
-                params: { planId }
-            });
         }
     };
 

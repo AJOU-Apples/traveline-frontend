@@ -1,10 +1,24 @@
-import React, { useState, useMemo, useRef } from 'react';
-import { View, StyleSheet, TouchableOpacity, ScrollView, Platform, Dimensions, Animated, PanResponder } from 'react-native';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import {
+    View,
+    StyleSheet,
+    TouchableOpacity,
+    ScrollView,
+    Platform,
+    Dimensions,
+    Animated,
+    PanResponder,
+    type ViewStyle
+} from 'react-native';
 import { Text } from 'react-native-paper';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import Constants from 'expo-constants';
 import { useUser } from '../src/context/UserContext';
+import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import type { Place, Flight, Accommodation } from '../src/context/UserContext';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -31,14 +45,239 @@ function calculateDistance(
     return distance;
 }
 
+// Google Directions API에서 반환된 polyline 디코딩
+function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
+    const poly: { latitude: number; longitude: number }[] = [];
+    let index = 0;
+    const len = encoded.length;
+    let lat = 0;
+    let lng = 0;
+
+    while (index < len) {
+        let b;
+        let shift = 0;
+        let result = 0;
+        do {
+            b = encoded.charCodeAt(index++) - 63;
+            result |= (b & 0x1f) << shift;
+            shift += 5;
+        } while (b >= 0x20);
+        const dlat = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+        lat += dlat;
+
+        shift = 0;
+        result = 0;
+        do {
+            b = encoded.charCodeAt(index++) - 63;
+            result |= (b & 0x1f) << shift;
+            shift += 5;
+        } while (b >= 0x20);
+        const dlng = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+        lng += dlng;
+
+        poly.push({
+            latitude: lat / 1e5,
+            longitude: lng / 1e5,
+        });
+    }
+
+    return poly;
+}
+
+// Google Directions API를 사용하여 두 지점 간 경로 가져오기
+async function fetchRoute(
+    origin: { latitude: number; longitude: number },
+    destination: { latitude: number; longitude: number },
+    apiKey: string
+): Promise<{ latitude: number; longitude: number }[]> {
+    try {
+        const originStr = `${origin.latitude},${origin.longitude}`;
+        const destStr = `${destination.latitude},${destination.longitude}`;
+
+        // 두 지점 간 거리 계산 (km)
+        const distance = calculateDistance(
+            origin.latitude,
+            origin.longitude,
+            destination.latitude,
+            destination.longitude
+        );
+
+        // 거리에 따라 이동 수단 자동 선택
+        // 2km 이하: 도보, 초과: 대중교통
+        const mode = distance <= 2 ? 'walking' : 'transit';
+
+        const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&mode=${mode}&key=${apiKey}`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.status === 'OK' && data.routes.length > 0) {
+            const points = data.routes[0].overview_polyline.points;
+            return decodePolyline(points);
+        }
+
+        if (data.routes.length === 0) {
+            const walkingUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&mode=walking&key=${apiKey}`;
+            const walkingResponse = await fetch(walkingUrl);
+            const walkingData = await walkingResponse.json();
+            if (walkingData.status === 'OK' && walkingData.routes.length > 0) {
+                const walkingPoints = walkingData.routes[0].overview_polyline.points;
+                return decodePolyline(walkingPoints);
+            }
+        }
+
+        // API 호출 실패 시 직선 반환
+        return [origin, destination];
+    } catch (error) {
+        console.error('Route fetch error:', error);
+        // 에러 발생 시 직선 반환
+        return [origin, destination];
+    }
+}
+
+// Google Maps API 키 (app.json에서 가져오기)
+const GOOGLE_MAPS_API_KEY = Platform.select({
+    ios: Constants.expoConfig?.ios?.config?.googleMapsApiKey,
+    android: Constants.expoConfig?.android?.config?.googleMaps?.apiKey,
+}) || 'AIzaSyCoD_272LfO6ENbwlzvrnlJlvPh6ysLKSs'; // Fallback
+
 export default function PlanDetailScreen() {
     const { planId } = useLocalSearchParams<{ planId: string }>();
-    const { getTravelPlan } = useUser();
+    const { getTravelPlan, reorderPlaces, getPlacesByDay, getExpensesByPlace, getFlightsByPlan, getAccommodationsByPlan } = useUser();
     const [selectedDay, setSelectedDay] = useState(1);
+    const [isEditMode, setIsEditMode] = useState(false);
+    const [isLoadingPlaces, setIsLoadingPlaces] = useState(false);
+    const [flights, setFlights] = useState<Flight[]>([]);
+    const [accommodations, setAccommodations] = useState<Accommodation[]>([]);
+
+    // 중복 로딩 방지를 위한 ref
+    const isLoadingPlacesRef = useRef(false);
+
+    // 저장된 여행 데이터 불러오기
+    const tripData = getTravelPlan(planId || '');
+
+    // 항공편/숙소 데이터 로드
+    const loadFlightsAndAccommodations = useCallback(async () => {
+        if (!planId) {
+            return;
+        }
+
+        try {
+            const [fetchedFlights, fetchedAccommodations] = await Promise.all([
+                getFlightsByPlan(planId),
+                getAccommodationsByPlan(planId),
+            ]);
+
+            setFlights(fetchedFlights);
+            setAccommodations(fetchedAccommodations);
+        } catch (error) {
+            console.error('Failed to load flights/accommodations:', error);
+        }
+    }, [planId, getFlightsByPlan, getAccommodationsByPlan]);
+
+    useFocusEffect(
+        useCallback(() => {
+            loadFlightsAndAccommodations();
+        }, [loadFlightsAndAccommodations])
+    );
+
+    const selectedFlights = useMemo(() => flights.filter((flight) => flight.isSelected), [flights]);
+    const selectedAccommodations = useMemo(
+        () => accommodations.filter((accommodation) => accommodation.isSelected),
+        [accommodations]
+    );
+
+    // 목적지에 따른 통화 기호 반환
+    const getCurrencySymbol = () => {
+        const destination = tripData?.destination || '';
+
+        if (destination.includes('일본') || destination.includes('도쿄') || destination.includes('오사카') || destination.includes('교토') || destination.includes('후쿠오카') || destination.includes('가고시마') || destination.includes('삿포로') || destination.includes('시즈오카') || destination.includes('나고야') || destination.includes('오키나와') || destination.includes('마쓰야마') || destination.includes('구마모토') || destination.includes('고베')) {
+            return '¥';
+        } else if (destination.includes('미국') || destination.includes('뉴욕') || destination.includes('LA') || destination.includes('샌프란시스코') || destination.includes('로스앤젤레스') || destination.includes('라스베이거스') || destination.includes('하와이')) {
+            return '$';
+        } else if (destination.includes('유럽') || destination.includes('파리') || destination.includes('런던') || destination.includes('독일') || destination.includes('로마') || destination.includes('바르셀로나') || destination.includes('암스테르담') || destination.includes('베를린') || destination.includes('하이델베르크') || destination.includes('프라하')) {
+            return '€';
+        } else if (destination.includes('중국') || destination.includes('베이징') || destination.includes('상하이')) {
+            return '¥';
+        } else if (destination.includes('태국') || destination.includes('방콕') || destination.includes('치앙마이') || destination.includes('푸켓')) {
+            return '฿';
+        } else if (destination.includes('베트남') || destination.includes('호치민') || destination.includes('하노이') || destination.includes('나트랑') || destination.includes('하롱비') || destination.includes('다낭')) {
+            return '₫';
+        } else if (destination.includes('싱가포르')) {
+            return 'S$';
+        } else if (destination.includes('두바이')) {
+            return 'AED';
+        } else if (destination.includes('시드니') || destination.includes('멜버른')) {
+            return 'A$';
+        }
+
+        return '₩'; // 기본값: 한국 원화
+    };
+
+    // 통화 코드에 따른 통화 기호 매핑
+    const getSymbolForCurrency = (currency?: string) => {
+        switch (currency) {
+            case 'KRW':
+                return '₩';
+            case 'JPY':
+                return '¥';
+            case 'USD':
+                return '$';
+            case 'EUR':
+                return '€';
+            case 'CNY':
+                return '¥';
+            case 'THB':
+                return '฿';
+            case 'VND':
+                return '₫';
+            case 'SGD':
+                return 'S$';
+            case 'AED':
+                return 'AED';
+            case 'AUD':
+                return 'A$';
+            default:
+                return '';
+        }
+    };
+
+    // 장소의 총 지출 계산 (통화별)
+    const getExpenseTotalsByCurrency = (place: Place): Record<string, number> => {
+        if (!place.expenses || place.expenses.length === 0) {
+            return {};
+        }
+
+        return place.expenses.reduce<Record<string, number>>((totals, expense) => {
+            const currency = expense.currency || 'KRW';
+            totals[currency] = (totals[currency] || 0) + expense.amount;
+            return totals;
+        }, {});
+    };
+
+    const formatExpenseSummary = (place: Place) => {
+        const totalsByCurrency = getExpenseTotalsByCurrency(place);
+        const entries = Object.entries(totalsByCurrency);
+
+        if (entries.length === 0) {
+            // 목적지 기반 통화 기호로 0 표시
+            return `지출 총합 ${getCurrencySymbol()}0`;
+        }
+
+        return `지출 총합 ${entries
+            .map(([currency, amount]) => `${getSymbolForCurrency(currency) || currency} ${amount.toLocaleString()}`)
+            .join(' + ')}`;
+    };
 
     // 지도 영역 높이 애니메이션
     const mapHeight = useRef(new Animated.Value(INITIAL_MAP_HEIGHT)).current;
     const currentHeight = useRef(INITIAL_MAP_HEIGHT);
+
+    // 지도 ref
+    const mapRef = useRef<MapView>(null);
+
+    // 실제 경로 데이터 저장
+    const [routeCoordinates, setRouteCoordinates] = useState<{ latitude: number; longitude: number }[]>([]);
 
     // PanResponder 설정
     const panResponder = useRef(
@@ -72,8 +311,53 @@ export default function PlanDetailScreen() {
         })
     ).current;
 
-    // 저장된 여행 데이터 불러오기
-    const tripData = getTravelPlan(planId || '');
+    // Places 로드 함수
+    const loadPlaces = async () => {
+        if (!planId || isLoadingPlacesRef.current) return;
+
+        isLoadingPlacesRef.current = true;
+        setIsLoadingPlaces(true);
+
+        try {
+            await getPlacesByDay(planId, selectedDay);
+
+            // 각 place의 expenses 로드
+            const currentDayData = getTravelPlan(planId)?.days.find(day => day.dayNumber === selectedDay);
+            if (currentDayData?.places) {
+                await Promise.all(
+                    currentDayData.places.map(place =>
+                        getExpensesByPlace(place.id).catch(err => {
+                            console.error(`Failed to load expenses for place ${place.id}:`, err);
+                            return [];
+                        })
+                    )
+                );
+            }
+        } catch (error) {
+            console.error('Failed to load places:', error);
+        } finally {
+            setIsLoadingPlaces(false);
+            isLoadingPlacesRef.current = false;
+        }
+    };
+
+    // 화면 포커스될 때 places 로드
+    useFocusEffect(
+        useCallback(() => {
+            if (planId && tripData) {
+                loadPlaces();
+            }
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [planId, selectedDay]) // loadPlaces는 의도적으로 제외
+    );
+
+    // selectedDay 변경 시 places 로드
+    useEffect(() => {
+        if (planId && tripData) {
+            loadPlaces();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedDay]); // loadPlaces는 의도적으로 제외
 
     if (!tripData) {
         return (
@@ -91,77 +375,215 @@ export default function PlanDetailScreen() {
     }
 
     const currentDayData = tripData.days.find(day => day.dayNumber === selectedDay);
-
-    // 여행지별 초기 지도 좌표 (TODO: BE에서 받아오기)
-    const defaultCoordinates: { [key: string]: { latitude: number; longitude: number } } = {
-        // 일본
-        '도쿄': { latitude: 35.6812, longitude: 139.7671 },  // 도쿄역 중심
-        '오사카': { latitude: 34.6937, longitude: 135.5023 },
-        '후쿠오카': { latitude: 33.5904, longitude: 130.4017 },
-        '가고시마': { latitude: 31.5969, longitude: 130.5571 },
-        '삿포로': { latitude: 43.0642, longitude: 141.3469 },
-        '시즈오카': { latitude: 34.9756, longitude: 138.3828 },
-        '나고야': { latitude: 35.1815, longitude: 136.9066 },
-        '오키나와': { latitude: 26.2124, longitude: 127.6809 },
-        '마쓰야마': { latitude: 33.8392, longitude: 132.7658 },
-        '구마모토': { latitude: 32.8031, longitude: 130.7079 },
-        '고베': { latitude: 34.6901, longitude: 135.1955 },
-        '교토': { latitude: 35.0116, longitude: 135.7681 },
-        // 한국
-        '서울': { latitude: 37.5665, longitude: 126.9780 },
-        '부산': { latitude: 35.1796, longitude: 129.0756 },
-        '제주': { latitude: 33.4996, longitude: 126.5312 },
-        '강릉': { latitude: 37.7519, longitude: 128.8761 },
-        '여수': { latitude: 34.7604, longitude: 127.6622 },
-        '경주': { latitude: 35.8562, longitude: 129.2247 },
-        // 동남아
-        '방콕': { latitude: 13.7563, longitude: 100.5018 },
-        '싱가포르': { latitude: 1.3521, longitude: 103.8198 },
-        '나트랑': { latitude: 12.2388, longitude: 109.1967 },
-        '마닐라': { latitude: 14.5995, longitude: 120.9842 },
-        '미얀마': { latitude: 21.9162, longitude: 95.9560 },  // 양곤
-        '치앙마이': { latitude: 18.7883, longitude: 98.9853 },
-        '하노이': { latitude: 21.0285, longitude: 105.8542 },
-        '하롱비': { latitude: 20.9101, longitude: 107.1839 },
-        '호치민': { latitude: 10.8231, longitude: 106.6297 },
-        '다낭': { latitude: 16.0544, longitude: 108.2022 },
-        '푸켓': { latitude: 7.8804, longitude: 98.3923 },
-        // 유럽
-        '파리': { latitude: 48.8566, longitude: 2.3522 },
-        '런던': { latitude: 51.5074, longitude: -0.1278 },
-        '로마': { latitude: 41.9028, longitude: 12.4964 },
-        '바르셀로나': { latitude: 41.3874, longitude: 2.1686 },
-        '암스테르담': { latitude: 52.3676, longitude: 4.9041 },
-        '베를린': { latitude: 52.5200, longitude: 13.4050 },
-        '하이델베르크': { latitude: 49.3988, longitude: 8.6724 },
-        '프라하': { latitude: 50.0755, longitude: 14.4378 },
-        // 미국
-        '뉴욕': { latitude: 40.7128, longitude: -74.0060 },
-        '샌프란시스코': { latitude: 37.7749, longitude: -122.4194 },
-        '로스앤젤레스': { latitude: 34.0522, longitude: -118.2437 },
-        '라스베이거스': { latitude: 36.1699, longitude: -115.1398 },
-        '하와이': { latitude: 21.3099, longitude: -157.8581 },  // 호놀룰루
-        // 기타
-        '시드니': { latitude: -33.8688, longitude: 151.2093 },
-        '멜버른': { latitude: -37.8136, longitude: 144.9631 },
-        '두바이': { latitude: 25.2048, longitude: 55.2708 },
-    };
-
-    // 여행지 이름에서 좌표 추출 (기본값: 서울)
+    // 초기 지도 좌표 (City 정보에서 가져오기)
     const initialRegion = useMemo(() => {
-        const destination = tripData.destination;
-        const coords = defaultCoordinates[destination] || { latitude: 37.5665, longitude: 126.9780 };
+        if (tripData?.destinationCity?.latitude && tripData?.destinationCity?.longitude) {
+            return {
+                latitude: tripData.destinationCity.latitude,
+                longitude: tripData.destinationCity.longitude,
+                latitudeDelta: 0.02,
+                longitudeDelta: 0.02,
+            };
+        }
+        // Fallback: 서울
         return {
-            ...coords,
-            latitudeDelta: 0.02,  // 더 확대된 뷰
-            longitudeDelta: 0.02, // 더 확대된 뷰
+            latitude: 37.5665,
+            longitude: 126.9780,
+            latitudeDelta: 0.02,
+            longitudeDelta: 0.02,
         };
-    }, [tripData.destination]);
+    }, [tripData?.destinationCity]);
 
     // 선택한 일차의 장소들을 마커로 표시
     const markers = useMemo(() => {
         return currentDayData?.places || [];
     }, [currentDayData]);
+
+    const extractDateFromValue = useCallback((value?: string) => {
+        if (!value) return undefined;
+        if (value.includes('T')) {
+            return value.split('T')[0];
+        }
+        if (value.includes('.')) {
+            return value.replace(/\./g, '-');
+        }
+        return value;
+    }, []);
+
+    const extractComparableTimestamp = useCallback((flight: Flight, date: string) => {
+        const departureDate = extractDateFromValue(flight.departureDate ?? flight.departureTime);
+        if (departureDate === date && flight.departureTime) {
+            const departure = new Date(flight.departureTime);
+            if (!Number.isNaN(departure.getTime())) {
+                return departure.getTime();
+            }
+        }
+
+        const arrivalDate = extractDateFromValue(flight.arrivalDate ?? flight.arrivalTime);
+        if (arrivalDate === date && flight.arrivalTime) {
+            const arrival = new Date(flight.arrivalTime);
+            if (!Number.isNaN(arrival.getTime())) {
+                return arrival.getTime();
+            }
+        }
+
+        if (flight.departureTime) {
+            const departure = new Date(flight.departureTime);
+            if (!Number.isNaN(departure.getTime())) {
+                return departure.getTime();
+            }
+        }
+
+        if (flight.arrivalTime) {
+            const arrival = new Date(flight.arrivalTime);
+            if (!Number.isNaN(arrival.getTime())) {
+                return arrival.getTime();
+            }
+        }
+
+        return 0;
+    }, [extractDateFromValue]);
+
+    const firstDayNumber = tripData.days[0]?.dayNumber;
+    const lastDayNumber = tripData.days[tripData.days.length - 1]?.dayNumber;
+    const isFirstDay = currentDayData?.dayNumber === firstDayNumber;
+    const isLastDay = currentDayData?.dayNumber === lastDayNumber;
+
+    const flightsForCurrentDay = useMemo(() => {
+        if (!currentDayData?.date) {
+            return [];
+        }
+
+        return flights
+            .filter((flight) => {
+                // isSelected가 true인 항공편만 표시
+                if (!flight.isSelected) {
+                    return false;
+                }
+
+                const departureDate = extractDateFromValue(flight.departureDate ?? flight.departureTime);
+                const arrivalDate = extractDateFromValue(flight.arrivalDate ?? flight.arrivalTime);
+                return departureDate === currentDayData.date || arrivalDate === currentDayData.date;
+            })
+            .sort((a, b) => {
+                const aTime = extractComparableTimestamp(a, currentDayData.date!);
+                const bTime = extractComparableTimestamp(b, currentDayData.date!);
+                return aTime - bTime;
+            });
+    }, [currentDayData?.date, extractComparableTimestamp, extractDateFromValue, flights]);
+
+    const flightsForDisplay = useMemo(() => (isEditMode ? [] : flightsForCurrentDay), [flightsForCurrentDay, isEditMode]);
+
+    const flightsTop = useMemo(() => {
+        if (flightsForDisplay.length === 0) {
+            return [];
+        }
+
+        if (isLastDay && !isFirstDay) {
+            return [];
+        }
+
+        return flightsForDisplay;
+    }, [flightsForDisplay, isFirstDay, isLastDay]);
+
+    const flightsBottom = useMemo(() => {
+        if (!isLastDay || isFirstDay || flightsForDisplay.length === 0) {
+            return [];
+        }
+        return flightsForDisplay;
+    }, [flightsForDisplay, isFirstDay, isLastDay]);
+
+    const hasFlights = flightsForDisplay.length > 0;
+
+    const formatTimeFromValue = useCallback((value?: string) => {
+        if (!value) return undefined;
+        if (value.includes('T')) {
+            return value.split('T')[1].slice(0, 5);
+        }
+        if (value.length >= 5) {
+            return value.slice(0, 5);
+        }
+        return value;
+    }, []);
+
+    const formatAirportDisplay = useCallback((name?: string, code?: string) => {
+        if (name && code) return `${name}(${code})`;
+        if (name) return name;
+        if (code) return code;
+        return '';
+    }, []);
+
+    // 실제 경로 가져오기
+    useEffect(() => {
+        const fetchRoutes = async () => {
+            const validMarkers = markers.filter(
+                place => place.latitude && place.longitude
+            );
+
+            if (validMarkers.length < 2) {
+                setRouteCoordinates([]);
+                return;
+            }
+
+            // 모든 구간의 경로를 가져와서 하나로 합치기
+            const allRouteCoordinates: { latitude: number; longitude: number }[] = [];
+
+            for (let i = 0; i < validMarkers.length - 1; i++) {
+                const origin = {
+                    latitude: validMarkers[i].latitude!,
+                    longitude: validMarkers[i].longitude!,
+                };
+                const destination = {
+                    latitude: validMarkers[i + 1].latitude!,
+                    longitude: validMarkers[i + 1].longitude!,
+                };
+
+                const routeSegment = await fetchRoute(origin, destination, GOOGLE_MAPS_API_KEY);
+
+                // 첫 번째 구간이 아니면 시작점 중복 제거
+                if (i > 0 && routeSegment.length > 0) {
+                    allRouteCoordinates.push(...routeSegment.slice(1));
+                } else {
+                    allRouteCoordinates.push(...routeSegment);
+                }
+            }
+
+            setRouteCoordinates(allRouteCoordinates);
+        };
+
+        fetchRoutes();
+    }, [markers]);
+
+    // 장소가 추가되거나 변경될 때 지도 확대 자동 조정
+    useEffect(() => {
+        if (!mapRef.current) return;
+
+        if (markers.length > 0) {
+            const validMarkers = markers.filter(
+                place => place.latitude && place.longitude
+            );
+
+            if (validMarkers.length > 0) {
+                const coordinates = validMarkers.map(place => ({
+                    latitude: place.latitude!,
+                    longitude: place.longitude!,
+                }));
+
+                // 약간의 딜레이를 주어 지도가 렌더링된 후 실행
+                setTimeout(() => {
+                    mapRef.current?.fitToCoordinates(coordinates, {
+                        edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+                        animated: true,
+                    });
+                }, 500);
+            }
+        } else {
+            // 장소가 없을 때는 기본 좌표로 이동
+            setTimeout(() => {
+                mapRef.current?.animateToRegion(initialRegion, 500);
+            }, 300);
+        }
+    }, [markers, initialRegion]);
 
     const handleClose = () => {
         // 모든 모달을 닫고 홈 화면으로 이동
@@ -169,8 +591,10 @@ export default function PlanDetailScreen() {
     };
 
     const handleAddPlace = () => {
-        // 목적지 좌표 정보 전달
-        const destinationCoords = defaultCoordinates[tripData.destination] || defaultCoordinates['서울'];
+        // 목적지 좌표 정보 전달 (City 정보에서 가져오기)
+        const destinationCoords = tripData.destinationCity?.latitude && tripData.destinationCity?.longitude
+            ? { latitude: tripData.destinationCity.latitude, longitude: tripData.destinationCity.longitude }
+            : { latitude: 37.5665, longitude: 126.9780 }; // Fallback: 서울
 
         router.push({
             pathname: '/add-place',
@@ -193,8 +617,284 @@ export default function PlanDetailScreen() {
         });
     };
 
+    const handleFlightsPress = () => {
+        router.push({
+            pathname: '/flights',
+            params: {
+                planId: planId || '',
+            },
+        });
+    };
+
+    const handleAccommodationsPress = () => {
+        router.push({
+            pathname: '/accommodations',
+            params: {
+                planId: planId || '',
+            },
+        });
+    };
+
+    // 장소 카드 렌더링 함수
+    const renderPlaceItem = ({ item: place, getIndex, drag, isActive }: RenderItemParams<Place>) => {
+        const currentDayData = tripData.days.find(day => day.dayNumber === selectedDay);
+        if (!currentDayData) return null;
+
+        const index = getIndex();
+        if (index === undefined) return null;
+
+        return (
+            <ScaleDecorator>
+                <View
+                    style={[
+                        styles.placeCardContainer,
+                        isActive && styles.placeCardDragging,
+                    ]}
+                >
+                    {/* 번호와 연결선 */}
+                    <View style={styles.placeLeftSection}>
+                        <View style={styles.placeNumber}>
+                            <Text style={styles.placeNumberText}>{index + 1}</Text>
+                        </View>
+                        <View style={[
+                            styles.connectionLineContainer,
+                            index === currentDayData.places.length - 1 && styles.lastConnectionLine
+                        ]}>
+                            <View style={styles.connectionLine} />
+                            {/* 거리 표시 (마지막 항목은 투명) */}
+                            <View style={[
+                                styles.distanceBadge,
+                                index === currentDayData.places.length - 1 && { opacity: 0 }
+                            ]}>
+                                <Text style={styles.distanceText}>
+                                    {(() => {
+                                        const nextPlace = currentDayData.places[index + 1];
+                                        if (nextPlace &&
+                                            place.latitude && place.longitude &&
+                                            nextPlace.latitude && nextPlace.longitude) {
+                                            const distance = calculateDistance(
+                                                place.latitude,
+                                                place.longitude,
+                                                nextPlace.latitude,
+                                                nextPlace.longitude
+                                            );
+                                            if (distance < 1) {
+                                                return `${Math.round(distance * 1000)}m`;
+                                            }
+                                            return `${distance.toFixed(1)}km`;
+                                        }
+                                        return '';
+                                    })()}
+                                </Text>
+                            </View>
+                        </View>
+                    </View>
+
+                    {/* 카드 내용 */}
+                    <TouchableOpacity
+                        style={styles.placeCard}
+                        onPress={() => {
+                            if (!isEditMode) {
+                                router.push({
+                                    pathname: '/place-detail',
+                                    params: {
+                                        planId: planId || '',
+                                        dayNumber: selectedDay.toString(),
+                                        placeId: place.id,
+                                    },
+                                });
+                            }
+                        }}
+                        disabled={isEditMode}
+                    >
+                        <View style={styles.placeCardInner}>
+                            {/* 시간 표시 (왼쪽) */}
+                            {place.time && (
+                                <Text style={styles.placeTimeLeft}>{place.time}</Text>
+                            )}
+
+                            {/* 장소 정보 */}
+                            <View style={styles.placeMainInfo}>
+                                <Text style={styles.placeName}>{place.name}</Text>
+                                {place.address && (
+                                    <Text style={styles.placeAddress} numberOfLines={1}>
+                                        {place.address}
+                                    </Text>
+                                )}
+                                {place.time && (
+                                    <Text style={styles.placeTimeInCard}>{place.time}</Text>
+                                )}
+                            </View>
+
+                            {/* 하단 정보 (좋아요, 지출) */}
+                            <View style={styles.placeBottomInfo}>
+                                <View style={styles.placeLikeSection}>
+                                    <Feather name="heart" size={12} color="#000" />
+                                    <Text style={styles.placeLikeText}>좋아요</Text>
+                                    <Text style={styles.placeLikeCount}>0</Text>
+                                </View>
+                                <Text style={styles.placeExpense}>
+                                    {formatExpenseSummary(place)}
+                                </Text>
+                            </View>
+                        </View>
+                    </TouchableOpacity>
+
+                    {/* 리오더 핸들 (편집 모드일 때만 표시) */}
+                    {isEditMode && (
+                        <TouchableOpacity
+                            style={styles.reorderHandle}
+                            onLongPress={drag}
+                            disabled={!isEditMode || isActive}
+                        >
+                            <MaterialIcons
+                                name="reorder"
+                                size={24}
+                                color={isActive ? '#088CDA' : '#C7C7C7'}
+                            />
+                        </TouchableOpacity>
+                    )}
+                </View>
+            </ScaleDecorator>
+        );
+    };
+
+    const renderFlightScheduleCard = (
+        flight: Flight,
+        placement: 'top' | 'bottom',
+        index: number,
+        total: number
+    ) => {
+        const departureTimeLabel = formatTimeFromValue(flight.departureTime);
+        const arrivalTimeLabel = formatTimeFromValue(flight.arrivalTime);
+        const departureAirportLabel = formatAirportDisplay(flight.departureAirport, flight.departureAirportCode);
+        const arrivalAirportLabel = formatAirportDisplay(flight.arrivalAirport, flight.arrivalAirportCode);
+
+        const cardLabel = (() => {
+            if (placement === 'top' && isFirstDay) return '출발';
+            if (placement === 'bottom' && isLastDay) return '귀국';
+
+            const dayDate = currentDayData?.date;
+            if (dayDate) {
+                const departureDate = extractDateFromValue(flight.departureDate ?? flight.departureTime);
+                const arrivalDate = extractDateFromValue(flight.arrivalDate ?? flight.arrivalTime);
+
+                if (departureDate === dayDate && arrivalDate === dayDate) {
+                    return '이동';
+                }
+
+                if (departureDate === dayDate) {
+                    return '출발';
+                }
+
+                if (arrivalDate === dayDate) {
+                    return '도착';
+                }
+            }
+
+            return '항공편';
+        })();
+
+        const flightNumberDisplay = [flight.airline, flight.flightNumber].filter(Boolean).join(' ') || '항공편';
+        const departureDate = extractDateFromValue(flight.departureDate ?? flight.departureTime);
+        const arrivalDate = extractDateFromValue(flight.arrivalDate ?? flight.arrivalTime);
+        const formattedDepartureDate = departureDate?.replace(/-/g, '.') ?? '';
+        const formattedArrivalDate = arrivalDate?.replace(/-/g, '.') ?? '';
+        const scheduleLabel =
+            formattedDepartureDate && formattedArrivalDate
+                ? formattedDepartureDate === formattedArrivalDate
+                    ? formattedDepartureDate
+                    : `${formattedDepartureDate} ~ ${formattedArrivalDate}`
+                : formattedDepartureDate || formattedArrivalDate || currentDayData?.displayDate || '';
+
+        const durationLabel = (() => {
+            if (flight.duration) return flight.duration;
+            if (!flight.departureTime || !flight.arrivalTime) return undefined;
+
+            const departure = new Date(flight.departureTime);
+            const arrival = new Date(flight.arrivalTime);
+
+            if (Number.isNaN(departure.getTime()) || Number.isNaN(arrival.getTime())) {
+                return undefined;
+            }
+
+            let diffMinutes = Math.round((arrival.getTime() - departure.getTime()) / 60000);
+            if (diffMinutes < 0) {
+                diffMinutes = 0;
+            }
+
+            const hours = Math.floor(diffMinutes / 60);
+            const minutes = diffMinutes % 60;
+
+            if (hours > 0 && minutes > 0) return `${hours}시간 ${minutes}분`;
+            if (hours > 0) return `${hours}시간`;
+            return `${minutes}분`;
+        })();
+
+        const timeRangeLabel =
+            departureTimeLabel || arrivalTimeLabel
+                ? [departureTimeLabel, arrivalTimeLabel].filter(Boolean).join(' - ')
+                : undefined;
+        const timeRangeWithDuration =
+            timeRangeLabel && durationLabel ? `${timeRangeLabel} (${durationLabel} 소요)` : timeRangeLabel;
+
+        const connectionLineStyles: ViewStyle[] = [styles.connectionLineContainer];
+        if (
+            placement === 'bottom' &&
+            (index === total - 1 || (currentDayData?.places?.length ?? 0) === 0)
+        ) {
+            connectionLineStyles.push(styles.lastConnectionLine);
+        }
+        if (
+            placement === 'top' &&
+            total === 1 &&
+            (currentDayData?.places?.length ?? 0) === 0 &&
+            flightsBottom.length === 0
+        ) {
+            connectionLineStyles.push(styles.lastConnectionLine);
+        }
+
+        return (
+            <View style={styles.placeCardContainer}>
+                <View style={styles.placeLeftSection}>
+                    <View style={[styles.placeNumber, styles.flightPlaceNumber]}>
+                        <MaterialIcons name="flight" size={14} color="#fff" />
+                    </View>
+                    <View style={connectionLineStyles}>
+                        <View style={styles.connectionLine} />
+                        <View style={[styles.distanceBadge, styles.hiddenDistanceBadge]}>
+                            <Text style={styles.distanceText}>{' '}</Text>
+                        </View>
+                    </View>
+                </View>
+                <View style={[styles.placeCard, styles.flightPlaceCard]}>
+                    <View style={styles.placeCardInner}>
+                        <View style={styles.placeMainInfo}>
+                            <Text style={styles.placeName}>{flightNumberDisplay}</Text>
+                            <Text style={styles.placeAddress} numberOfLines={1}>
+                                {departureAirportLabel} → {arrivalAirportLabel}
+                            </Text>
+                            {timeRangeWithDuration ? (
+                                <Text style={styles.placeTimeInCard}>{timeRangeWithDuration}</Text>
+                            ) : null}
+                        </View>
+                        <View style={styles.placeBottomInfo}>
+                            <View style={styles.placeLikeSection}>
+                                <MaterialIcons name="flight" size={12} color="#088CDA" />
+                                <Text style={[styles.placeLikeText, styles.flightLabelText]}>{cardLabel}</Text>
+                            </View>
+                            <Text style={[styles.placeExpense, styles.flightScheduleMeta]}>
+                                {scheduleLabel}
+                            </Text>
+                        </View>
+                    </View>
+                </View>
+            </View>
+        );
+    };
+
     return (
-        <View style={styles.container}>
+        <GestureHandlerRootView style={styles.container}>
             {/* 상단 헤더 */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
@@ -217,17 +917,41 @@ export default function PlanDetailScreen() {
 
                 {/* 항공편/숙소 버튼 */}
                 <View style={styles.quickActionsRow}>
-                    <TouchableOpacity style={styles.quickActionButton}>
-                        <View style={styles.iconCircle}>
-                            <Feather name="plus" size={10} color="#C7C7C7" />
-                        </View>
-                        <Text style={styles.quickActionText}>항공편</Text>
+                    <TouchableOpacity
+                        style={[
+                            styles.quickActionButton,
+                            selectedFlights.length > 0 && styles.quickActionButtonFilled
+                        ]}
+                        onPress={handleFlightsPress}
+                    >
+                        {selectedFlights.length === 0 ? (
+                            <>
+                                <View style={styles.iconCircle}>
+                                    <Feather name="plus" size={10} color="#C7C7C7" />
+                                </View>
+                                <Text style={styles.quickActionText}>항공편</Text>
+                            </>
+                        ) : (
+                            <Text style={styles.quickActionText}>항공편 {selectedFlights.length}</Text>
+                        )}
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.quickActionButton}>
-                        <View style={styles.iconCircle}>
-                            <Feather name="plus" size={10} color="#C7C7C7" />
-                        </View>
-                        <Text style={styles.quickActionText}>숙소</Text>
+                    <TouchableOpacity
+                        style={[
+                            styles.quickActionButton,
+                            selectedAccommodations.length > 0 && styles.quickActionButtonFilled
+                        ]}
+                        onPress={handleAccommodationsPress}
+                    >
+                        {selectedAccommodations.length === 0 ? (
+                            <>
+                                <View style={styles.iconCircle}>
+                                    <Feather name="plus" size={10} color="#C7C7C7" />
+                                </View>
+                                <Text style={styles.quickActionText}>숙소</Text>
+                            </>
+                        ) : (
+                            <Text style={styles.quickActionText}>숙소 {selectedAccommodations.length}</Text>
+                        )}
                     </TouchableOpacity>
                 </View>
 
@@ -249,25 +973,47 @@ export default function PlanDetailScreen() {
             {/* 지도 영역 */}
             <Animated.View style={[styles.mapSection, { height: mapHeight }]}>
                 <MapView
+                    ref={mapRef}
                     provider={PROVIDER_GOOGLE}
                     style={styles.map}
                     initialRegion={initialRegion}
                     showsUserLocation={true}
                     showsMyLocationButton={true}
                 >
+                    {/* 장소들 사이의 실제 경로선 */}
+                    {routeCoordinates.length > 0 && (
+                        <Polyline
+                            coordinates={routeCoordinates}
+                            strokeColor="#088CDA"
+                            strokeWidth={5}
+                            lineCap="round"
+                            lineJoin="round"
+                        />
+                    )}
+
+                    {/* 마커들 */}
                     {markers
                         .filter(place => place.latitude && place.longitude)
-                        .map((place, index) => (
-                            <Marker
-                                key={place.id}
-                                coordinate={{
-                                    latitude: place.latitude!,
-                                    longitude: place.longitude!,
-                                }}
-                                title={place.name}
-                                description={place.address}
-                            />
-                        ))}
+                        .map((place, index) => {
+                            const validMarkers = markers.filter(p => p.latitude && p.longitude);
+                            const markerIndex = validMarkers.findIndex(p => p.id === place.id);
+
+                            return (
+                                <Marker
+                                    key={place.id}
+                                    coordinate={{
+                                        latitude: place.latitude!,
+                                        longitude: place.longitude!,
+                                    }}
+                                    title={place.name}
+                                    description={place.address}
+                                >
+                                    <View style={styles.customMarker}>
+                                        <Text style={styles.markerNumber}>{markerIndex + 1}</Text>
+                                    </View>
+                                </Marker>
+                            );
+                        })}
                 </MapView>
             </Animated.View>
 
@@ -312,111 +1058,68 @@ export default function PlanDetailScreen() {
                         <Text style={styles.dayLabel}>{currentDayData?.dayNumber}일차</Text>
                         <Text style={styles.dayDate}>{currentDayData?.displayDate}</Text>
                     </View>
-                    <Text style={styles.editText}>편집</Text>
+                    <TouchableOpacity onPress={() => setIsEditMode(!isEditMode)}>
+                        <Text style={styles.editText}>{isEditMode ? '완료' : '편집'}</Text>
+                    </TouchableOpacity>
                 </View>
 
+                {/* 편집 모드 안내 */}
+                {isEditMode && currentDayData && currentDayData.places.length > 0 && (
+                    <View style={styles.editModeHint}>
+                        <MaterialIcons name="info-outline" size={16} color="#088CDA" />
+                        <Text style={styles.editModeHintText}>
+                            리오더 아이콘(≡)을 길게 눌러 드래그하여 순서를 변경하세요
+                        </Text>
+                    </View>
+                )}
+
                 {/* 일정 내용 */}
-                <ScrollView
-                    style={styles.scheduleContent}
-                    showsVerticalScrollIndicator={false}
-                >
-                    {/* 장소 리스트 */}
-                    {currentDayData?.places.length === 0 ? (
-                        <View style={styles.emptyPlaces}>
-                            <Text style={styles.emptyPlacesText}>아직 추가된 장소가 없습니다</Text>
-                        </View>
-                    ) : (
-                        <View style={styles.placesList}>
-                            {currentDayData?.places.map((place, index) => (
-                                <React.Fragment key={place.id}>
-                                    {/* 장소 카드 */}
-                                    <View style={styles.placeCardContainer}>
-                                        {/* 번호와 연결선 */}
-                                        <View style={styles.placeLeftSection}>
-                                            <View style={styles.placeNumber}>
-                                                <Text style={styles.placeNumberText}>{index + 1}</Text>
-                                            </View>
-                                            <View style={[
-                                                styles.connectionLineContainer,
-                                                index === currentDayData.places.length - 1 && styles.lastConnectionLine
-                                            ]}>
-                                                <View style={styles.connectionLine} />
-                                                {/* 거리 표시 (마지막 항목은 투명) */}
-                                                <View style={[
-                                                    styles.distanceBadge,
-                                                    index === currentDayData.places.length - 1 && { opacity: 0 }
-                                                ]}>
-                                                    <Text style={styles.distanceText}>
-                                                        {(() => {
-                                                            // 다음 장소가 있고 둘 다 좌표가 있으면 실제 거리 계산
-                                                            const nextPlace = currentDayData.places[index + 1];
-                                                            if (nextPlace &&
-                                                                place.latitude && place.longitude &&
-                                                                nextPlace.latitude && nextPlace.longitude) {
-                                                                const distance = calculateDistance(
-                                                                    place.latitude,
-                                                                    place.longitude,
-                                                                    nextPlace.latitude,
-                                                                    nextPlace.longitude
-                                                                );
-                                                                // 1km 미만이면 미터 단위로 표시
-                                                                if (distance < 1) {
-                                                                    return `${Math.round(distance * 1000)}m`;
-                                                                }
-                                                                return `${distance.toFixed(1)}km`;
-                                                            }
-                                                            // 좌표가 없으면 빈 문자열 (레이아웃 유지)
-                                                            return '';
-                                                        })()}
-                                                    </Text>
-                                                </View>
-                                            </View>
-                                        </View>
-
-                                        {/* 카드 내용 */}
-                                        <View style={styles.placeCard}>
-                                            <View style={styles.placeCardInner}>
-                                                {/* 시간 표시 (왼쪽) */}
-                                                {place.time && (
-                                                    <Text style={styles.placeTimeLeft}>{place.time}</Text>
-                                                )}
-
-                                                {/* 장소 정보 */}
-                                                <View style={styles.placeMainInfo}>
-                                                    <Text style={styles.placeName}>{place.name}</Text>
-                                                    {place.address && (
-                                                        <Text style={styles.placeAddress} numberOfLines={1}>
-                                                            {place.address}
-                                                        </Text>
-                                                    )}
-                                                    {place.time && (
-                                                        <Text style={styles.placeTimeInCard}>{place.time}</Text>
-                                                    )}
-                                                </View>
-
-                                                {/* 하단 정보 (좋아요, 지출) */}
-                                                <View style={styles.placeBottomInfo}>
-                                                    <View style={styles.placeLikeSection}>
-                                                        <Feather name="heart" size={12} color="#000" />
-                                                        <Text style={styles.placeLikeText}>좋아요</Text>
-                                                        <Text style={styles.placeLikeCount}>0</Text>
-                                                    </View>
-                                                    <Text style={styles.placeExpense}>지출 총합 0엔</Text>
-                                                </View>
-                                            </View>
-                                        </View>
+                <View style={styles.scheduleContentContainer}>
+                    <DraggableFlatList
+                        data={currentDayData?.places || []}
+                        renderItem={renderPlaceItem}
+                        keyExtractor={(item) => item.id}
+                        onDragEnd={({ data, from, to }) => {
+                            if (from !== to && planId) {
+                                const placeIds = data.map(place => place.id);
+                                reorderPlaces(planId, selectedDay, placeIds);
+                            }
+                        }}
+                        activationDistance={isEditMode ? 10 : 999999}
+                        containerStyle={styles.draggableList}
+                        contentContainerStyle={styles.draggableListContent}
+                        showsVerticalScrollIndicator={false}
+                        ListHeaderComponent={() => (
+                            <>
+                                {flightsTop.map((flight, index) => (
+                                    <React.Fragment key={`flight-${flight.id}-top-${index}`}>
+                                        {renderFlightScheduleCard(flight, 'top', index, flightsTop.length)}
+                                    </React.Fragment>
+                                ))}
+                                {!(currentDayData?.places?.length || hasFlights) && (
+                                    <View style={styles.emptyPlaces}>
+                                        <Text style={styles.emptyPlacesText}>아직 추가된 장소가 없습니다</Text>
                                     </View>
-                                </React.Fragment>
-                            ))}
-                        </View>
-                    )}
-
-                    {/* 장소 추가 버튼 */}
-                    <TouchableOpacity style={styles.addPlaceButton} onPress={handleAddPlace}>
-                        <Feather name="plus" size={12} color="#fff" />
-                        <Text style={styles.addPlaceText}>장소 추가</Text>
-                    </TouchableOpacity>
-                </ScrollView>
+                                )}
+                            </>
+                        )}
+                        ListFooterComponent={() => (
+                            <View>
+                                {flightsBottom.map((flight, index) => (
+                                    <React.Fragment key={`flight-${flight.id}-bottom-${index}`}>
+                                        {renderFlightScheduleCard(flight, 'bottom', index, flightsBottom.length)}
+                                    </React.Fragment>
+                                ))}
+                                <View style={styles.addPlaceButtonContainer}>
+                                    <TouchableOpacity style={styles.addPlaceButton} onPress={handleAddPlace}>
+                                        <Feather name="plus" size={12} color="#fff" />
+                                        <Text style={styles.addPlaceText}>장소 추가</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        )}
+                    />
+                </View>
             </Animated.View>
 
             {/* 하단 네비게이션 바 */}
@@ -427,14 +1130,20 @@ export default function PlanDetailScreen() {
                 <TouchableOpacity style={styles.navItem} onPress={handleChecklistPress}>
                     <MaterialIcons name="card-travel" size={32} color="#9E9E9E" />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.navItem}>
+                <TouchableOpacity
+                    style={styles.navItem}
+                    onPress={() => router.push({
+                        pathname: '/expenses',
+                        params: { planId: planId || '' }
+                    })}
+                >
                     <MaterialIcons name="receipt" size={32} color="#9E9E9E" />
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.navItem}>
                     <MaterialIcons name="chat" size={32} color="#9E9E9E" />
                 </TouchableOpacity>
             </View>
-        </View>
+        </GestureHandlerRootView>
     );
 }
 
@@ -505,8 +1214,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         gap: 8,
-        paddingHorizontal: 6,
+        paddingHorizontal: 8,
         height: 24,
+    },
+    quickActionButtonFilled: {
+        backgroundColor: '#088CDA',
     },
     quickActionText: {
         fontSize: 12,
@@ -620,10 +1332,26 @@ const styles = StyleSheet.create({
     dayTabTextActive: {
         color: '#fff',
     },
+    scheduleContentContainer: {
+        flex: 1,
+    },
     scheduleContent: {
         flex: 1,
         paddingHorizontal: 21,
         paddingTop: 16,
+    },
+    draggableList: {
+        flex: 1,
+    },
+    draggableListContent: {
+        paddingHorizontal: 21,
+        paddingTop: 16,
+        paddingBottom: 16,
+    },
+    addPlaceButtonContainer: {
+        paddingHorizontal: 21,
+        paddingBottom: 24,
+        backgroundColor: '#fff',
     },
     dayHeader: {
         flexDirection: 'row',
@@ -672,8 +1400,7 @@ const styles = StyleSheet.create({
         paddingVertical: 4,
         height: 24,
         alignSelf: 'flex-start',
-        marginTop: 16,
-        marginBottom: 24,
+        marginTop: 8,
     },
     addPlaceText: {
         fontSize: 12,
@@ -689,6 +1416,23 @@ const styles = StyleSheet.create({
     emptyPlacesText: {
         fontSize: 14,
         color: '#9E9E9E',
+    },
+    flightPlaceCard: {
+        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+        borderWidth: 0,
+        borderColor: 'transparent',
+    },
+    flightPlaceNumber: {
+        backgroundColor: '#088CDA',
+    },
+    hiddenDistanceBadge: {
+        opacity: 0,
+    },
+    flightLabelText: {
+        color: '#585858',
+    },
+    flightScheduleMeta: {
+        color: '#585858',
     },
     placesList: {
         marginTop: 0,
@@ -861,6 +1605,65 @@ const styles = StyleSheet.create({
     navItem: {
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    reorderHandle: {
+        width: 32,
+        height: 32,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 8,
+    },
+    placeCardDragging: {
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 8,
+        },
+        shadowOpacity: 0.3,
+        shadowRadius: 12,
+        elevation: 12,
+    },
+    editModeHint: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        backgroundColor: '#E3F2FD',
+        marginHorizontal: 21,
+        marginTop: 8,
+        borderRadius: 8,
+    },
+    editModeHintText: {
+        fontSize: 12,
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#088CDA',
+        fontWeight: '500',
+    },
+    customMarker: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#088CDA',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 3,
+        borderColor: '#fff',
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.3,
+        shadowRadius: 3,
+        elevation: 5,
+    },
+    markerNumber: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#fff',
     },
 });
 

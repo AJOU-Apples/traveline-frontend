@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, StyleSheet, ScrollView, FlatList, Dimensions, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, ScrollView, FlatList, Dimensions, TouchableOpacity, Alert } from 'react-native';
 import { Text, Surface, IconButton } from 'react-native-paper';
 import { Feather } from '@expo/vector-icons';
 import { useUser } from '../../src/context/UserContext';
@@ -18,7 +18,33 @@ const ddays = (iso: string) => {
 };
 
 export default function LandingPage() {
-    const { username, popularTrips, recentTrips, travelPlans } = useUser();
+    const { username, isAuthenticated, popularTrips, recentTrips, travelPlans } = useUser();
+
+    // 새 일정 추가 핸들러
+    const handleNewSchedule = () => {
+        if (!isAuthenticated) {
+            Alert.alert(
+                '로그인이 필요합니다',
+                '새 일정 추가는 로그인 후 이용 가능한 기능입니다.\n지금 가입하시겠습니까?',
+                [
+                    {
+                        text: '취소',
+                        style: 'cancel',
+                    },
+                    {
+                        text: '회원가입',
+                        onPress: () => router.push('/auth/register'),
+                    },
+                    {
+                        text: '로그인',
+                        onPress: () => router.push('/login'),
+                    },
+                ]
+            );
+            return;
+        }
+        router.push('/new-schedule');
+    };
 
     // 다가오는 여행 찾기 (저장된 여행 계획 중 가장 가까운 것)
     const upcomingPlan = useMemo(() => {
@@ -84,7 +110,7 @@ export default function LandingPage() {
                                 params: { planId: upcomingPlan.id }
                             });
                         } else {
-                            router.push('/new-schedule');
+                            handleNewSchedule();
                         }
                     }}
                     activeOpacity={0.7}
@@ -137,7 +163,7 @@ export default function LandingPage() {
             </ScrollView>
 
             <TouchableOpacity
-                onPress={() => router.push('/new-schedule')}
+                onPress={handleNewSchedule}
                 activeOpacity={0.8}
             >
                 <LinearGradient

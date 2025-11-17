@@ -1,62 +1,48 @@
-import React, {useState} from 'react';
-import {View, StyleSheet, TouchableOpacity, FlatList, Platform, Alert} from 'react-native';
-import {Text, Searchbar} from 'react-native-paper';
-import {router} from 'expo-router';
-import {Feather} from '@expo/vector-icons';
+import React, { useState, useEffect } from 'react';
+import { View, StyleSheet, TouchableOpacity, FlatList, Platform, Alert, ActivityIndicator } from 'react-native';
+import { Text, Searchbar } from 'react-native-paper';
+import { router } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
+import { CityDto, getDomesticCities, getInternationalCities } from '../src/utils/cityApi';
 
-// TODO: BE에서 데이터 받아오기
-const DUMMY_DESTINATIONS = {
-    domestic: [
-        {id: '1', name: '서울'},
-        {id: '2', name: '부산'},
-        {id: '3', name: '제주'},
-        {id: '4', name: '강릉'},
-        {id: '5', name: '여수'},
-    ],
-    international: [
-        {id: '11', name: '도쿄'},
-        {id: '12', name: '오사카'},
-        {id: '13', name: '후쿠오카'},
-        {id: '14', name: '가고시마'},
-        {id: '15', name: '삿포로'},
-        {id: '16', name: '시즈오카'},
-        {id: '17', name: '나고야'},
-        {id: '18', name: '오키나와'},
-        {id: '19', name: '마쓰야마'},
-        {id: '20', name: '구마모토'},
-        {id: '21', name: '나트랑'},
-        {id: '22', name: '마닐라'},
-        {id: '23', name: '미얀마'},
-        {id: '24', name: '치앙마이'},
-        {id: '25', name: '방콕'},
-        {id: '26', name: '하노이'},
-        {id: '27', name: '하롱비'},
-        {id: '28', name: '하이델베르크'},
-        {id: '29', name: '호치민'},
-        {id: '30', name: '방콕'},
-        {id: '31', name: '하노이'},
-        {id: '32', name: '하롱비'},
-        {id: '33', name: '하이델베르크'},
-        {id: '34', name: '호치민'},
-        {id: '35', name: '방콕'},
-        {id: '36', name: '하노이'},
-        {id: '37', name: '하롱비'},
-    ],
-};
-
-type Destination = {
-    id: string;
-    name: string;
-};
+type Destination = CityDto;
 
 export default function NewScheduleScreen() {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedTab, setSelectedTab] = useState<'domestic' | 'international'>('international');
     const [selectedDestination, setSelectedDestination] = useState<Destination | null>(null);
+    const [domesticCities, setDomesticCities] = useState<Destination[]>([]);
+    const [internationalCities, setInternationalCities] = useState<Destination[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    // 도시 목록 가져오기
+    const fetchCities = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const [domestic, international] = await Promise.all([
+                getDomesticCities(),
+                getInternationalCities()
+            ]);
+            setDomesticCities(domestic);
+            setInternationalCities(international);
+        } catch (err) {
+            console.error('Failed to fetch cities:', err);
+            setError('도시 목록을 불러오는데 실패했습니다.');
+            Alert.alert('오류', '도시 목록을 불러오는데 실패했습니다. 다시 시도해주세요.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchCities();
+    }, []);
 
     const destinations = selectedTab === 'domestic'
-        ? DUMMY_DESTINATIONS.domestic
-        : DUMMY_DESTINATIONS.international;
+        ? domesticCities
+        : internationalCities;
 
     const filteredDestinations = destinations.filter(dest =>
         dest.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -97,7 +83,10 @@ export default function NewScheduleScreen() {
             // 날짜 선택 화면으로 이동하면서 선택한 여행지 전달
             router.push({
                 pathname: '/date-selection',
-                params: {destination: selectedDestination.name}
+                params: {
+                    destinationId: selectedDestination.id.toString(),
+                    destinationName: selectedDestination.name
+                }
             });
         }
     };
@@ -106,7 +95,7 @@ export default function NewScheduleScreen() {
         return selectedDestination?.id === destination.id;
     };
 
-    const renderDestinationItem = ({item}: { item: Destination }) => {
+    const renderDestinationItem = ({ item }: { item: Destination }) => {
         const selected = isSelected(item);
         return (
             <View style={styles.cityCard}>
@@ -129,7 +118,7 @@ export default function NewScheduleScreen() {
             <View style={styles.header}>
                 <View style={styles.headerContent}>
                     <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                        <Feather name="arrow-left" size={24} color="#000"/>
+                        <Feather name="arrow-left" size={24} color="#000" />
                     </TouchableOpacity>
                     <View style={styles.searchBarContainer}>
                         <Searchbar
@@ -171,14 +160,31 @@ export default function NewScheduleScreen() {
             </View>
 
             {/* 도시 리스트 */}
-            <FlatList
-                data={filteredDestinations}
-                renderItem={renderDestinationItem}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={styles.listContainer}
-                showsVerticalScrollIndicator={true}
-                style={styles.list}
-            />
+            {loading ? (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#088CDA" />
+                    <Text style={styles.loadingText}>도시 목록을 불러오는 중...</Text>
+                </View>
+            ) : error ? (
+                <View style={styles.errorContainer}>
+                    <Text style={styles.errorText}>{error}</Text>
+                    <TouchableOpacity
+                        style={styles.retryButton}
+                        onPress={fetchCities}
+                    >
+                        <Text style={styles.retryButtonText}>다시 시도</Text>
+                    </TouchableOpacity>
+                </View>
+            ) : (
+                <FlatList
+                    data={filteredDestinations}
+                    renderItem={renderDestinationItem}
+                    keyExtractor={(item) => item.id.toString()}
+                    contentContainerStyle={styles.listContainer}
+                    showsVerticalScrollIndicator={true}
+                    style={styles.list}
+                />
+            )}
 
             {/* 하단 선택 완료 버튼 */}
             {selectedDestination && (
@@ -261,6 +267,40 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         paddingTop: 8,
         paddingBottom: 20,
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 40,
+    },
+    loadingText: {
+        marginTop: 16,
+        fontSize: 14,
+        color: '#585858',
+    },
+    errorContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 40,
+    },
+    errorText: {
+        fontSize: 14,
+        color: '#FF5252',
+        textAlign: 'center',
+        marginBottom: 16,
+    },
+    retryButton: {
+        backgroundColor: '#088CDA',
+        borderRadius: 8,
+        paddingHorizontal: 24,
+        paddingVertical: 12,
+    },
+    retryButtonText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#fff',
     },
     cityCard: {
         backgroundColor: '#fff',

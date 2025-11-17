@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Modal, Pressable, TextInput, Alert as RNAlert } from 'react-native';
+import React, { useState, useCallback } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Modal, Pressable, TextInput, Alert as RNAlert, RefreshControl } from 'react-native';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { useUser, type Supply, type Task } from '../src/context/UserContext';
 
 interface ChecklistItem {
     id: string;
@@ -10,108 +10,92 @@ interface ChecklistItem {
     checked: boolean;
 }
 
-const SUPPLIES_STORAGE_KEY = 'supplies_items_';
-const CHECKLIST_STORAGE_KEY = 'checklist_items_';
-
-const DEFAULT_SUPPLIES: ChecklistItem[] = [
-    { id: '1', text: '여권 및 여권 사본', checked: false },
-    { id: '2', text: '현금 및 해외 결제 카드', checked: false },
-    { id: '3', text: '충전기', checked: false },
-    { id: '4', text: '멀티 어댑터(돼지코)', checked: false },
-    { id: '5', text: '상비약', checked: false },
-    { id: '6', text: '칫솔, 치약', checked: false },
-];
-
-const DEFAULT_CHECKLIST: ChecklistItem[] = [
-    { id: '1', text: '여권 만료일 확인하기', checked: false },
-    { id: '2', text: '여행자 보험 가입하기', checked: false },
-    { id: '3', text: '수하물 무게 확인하기', checked: false },
-    { id: '4', text: '액체 100ml 규정 확인하기', checked: false },
-];
-
 export default function ChecklistScreen() {
     const params = useLocalSearchParams();
     const planId = params.planId as string;
 
+    const { getSuppliesByPlan, createSupply, updateSupply, deleteSupply, getTasksByPlan, createTask, updateTask, deleteTask } = useUser();
+
     const [selectedTab, setSelectedTab] = useState<'준비물' | '체크리스트'>('준비물');
-    const [supplies, setSupplies] = useState<ChecklistItem[]>([]);
-    const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
+    const [supplies, setSupplies] = useState<Supply[]>([]);
+    const [tasks, setTasks] = useState<Task[]>([]);
     const [deleteModalVisible, setDeleteModalVisible] = useState(false);
     const [itemToDelete, setItemToDelete] = useState<{ id: string; text: string } | null>(null);
     const [addModalVisible, setAddModalVisible] = useState(false);
     const [newItemText, setNewItemText] = useState('');
+    const [isRefreshing, setIsRefreshing] = useState(false);
 
     // 현재 탭에 따라 표시할 items
-    const currentItems = selectedTab === '준비물' ? supplies : checklist;
-    const setCurrentItems = selectedTab === '준비물' ? setSupplies : setChecklist;
+    const currentItems: ChecklistItem[] = selectedTab === '준비물'
+        ? supplies.map(s => ({ id: s.id, text: s.text, checked: s.checked }))
+        : tasks.map(t => ({ id: t.id, text: t.text, checked: t.checked }));
 
     // 데이터 로드
-    useEffect(() => {
-        loadItems();
-    }, [planId]);
+    const loadItems = useCallback(async () => {
+        if (!planId) return;
 
-    // 준비물 변경 시 저장
-    useEffect(() => {
-        if (supplies.length > 0) {
-            saveSupplies();
-        }
-    }, [supplies]);
-
-    // 체크리스트 변경 시 저장
-    useEffect(() => {
-        if (checklist.length > 0) {
-            saveChecklist();
-        }
-    }, [checklist]);
-
-    const loadItems = async () => {
         try {
-            // 준비물 로드
-            const storedSupplies = await AsyncStorage.getItem(SUPPLIES_STORAGE_KEY + planId);
-            if (storedSupplies) {
-                setSupplies(JSON.parse(storedSupplies));
-            } else {
-                setSupplies(DEFAULT_SUPPLIES);
-            }
-
-            // 체크리스트 로드
-            const storedChecklist = await AsyncStorage.getItem(CHECKLIST_STORAGE_KEY + planId);
-            if (storedChecklist) {
-                setChecklist(JSON.parse(storedChecklist));
-            } else {
-                setChecklist(DEFAULT_CHECKLIST);
-            }
+            const [fetchedSupplies, fetchedTasks] = await Promise.all([
+                getSuppliesByPlan(planId),
+                getTasksByPlan(planId),
+            ]);
+            setSupplies(fetchedSupplies);
+            setTasks(fetchedTasks);
         } catch (error) {
             console.error('Failed to load items:', error);
-            setSupplies(DEFAULT_SUPPLIES);
-            setChecklist(DEFAULT_CHECKLIST);
+            RNAlert.alert('오류', '데이터를 불러오지 못했습니다.');
         }
-    };
+    }, [planId, getSuppliesByPlan, getTasksByPlan]);
 
-    const saveSupplies = async () => {
-        try {
-            await AsyncStorage.setItem(SUPPLIES_STORAGE_KEY + planId, JSON.stringify(supplies));
-        } catch (error) {
-            console.error('Failed to save supplies:', error);
-        }
-    };
+    useFocusEffect(
+        useCallback(() => {
+            loadItems();
+        }, [loadItems])
+    );
 
-    const saveChecklist = async () => {
-        try {
-            await AsyncStorage.setItem(CHECKLIST_STORAGE_KEY + planId, JSON.stringify(checklist));
-        } catch (error) {
-            console.error('Failed to save checklist:', error);
-        }
+    const handleRefresh = async () => {
+        setIsRefreshing(true);
+        await loadItems();
+        setIsRefreshing(false);
     };
 
     const handleClose = () => {
         router.back();
     };
 
-    const toggleItem = (id: string) => {
-        setCurrentItems(currentItems.map(item =>
-            item.id === id ? { ...item, checked: !item.checked } : item
-        ));
+    const handlePlanDetailPress = () => {
+        router.push({
+            pathname: '/plan-detail',
+            params: { planId: planId || '' }
+        });
+    };
+
+    const handleExpensesPress = () => {
+        router.push({
+            pathname: '/expenses',
+            params: { planId: planId || '' }
+        });
+    };
+
+    const toggleItem = async (id: string) => {
+        try {
+            if (selectedTab === '준비물') {
+                const supply = supplies.find(s => s.id === id);
+                if (supply) {
+                    await updateSupply(id, { checked: !supply.checked });
+                    setSupplies(prev => prev.map(s => s.id === id ? { ...s, checked: !s.checked } : s));
+                }
+            } else {
+                const task = tasks.find(t => t.id === id);
+                if (task) {
+                    await updateTask(id, { checked: !task.checked });
+                    setTasks(prev => prev.map(t => t.id === id ? { ...t, checked: !t.checked } : t));
+                }
+            }
+        } catch (error) {
+            console.error('Failed to toggle item:', error);
+            RNAlert.alert('오류', '체크 상태 변경에 실패했습니다.');
+        }
     };
 
     const handleDeleteItem = (id: string, text: string) => {
@@ -119,12 +103,24 @@ export default function ChecklistScreen() {
         setDeleteModalVisible(true);
     };
 
-    const confirmDelete = () => {
-        if (itemToDelete) {
-            setCurrentItems(currentItems.filter(item => item.id !== itemToDelete.id));
+    const confirmDelete = async () => {
+        if (!itemToDelete) return;
+
+        try {
+            if (selectedTab === '준비물') {
+                await deleteSupply(itemToDelete.id);
+                setSupplies(prev => prev.filter(s => s.id !== itemToDelete.id));
+            } else {
+                await deleteTask(itemToDelete.id);
+                setTasks(prev => prev.filter(t => t.id !== itemToDelete.id));
+            }
+        } catch (error) {
+            console.error('Failed to delete item:', error);
+            RNAlert.alert('오류', '삭제에 실패했습니다.');
+        } finally {
+            setDeleteModalVisible(false);
+            setItemToDelete(null);
         }
-        setDeleteModalVisible(false);
-        setItemToDelete(null);
     };
 
     const cancelDelete = () => {
@@ -136,21 +132,34 @@ export default function ChecklistScreen() {
         setAddModalVisible(true);
     };
 
-    const confirmAddItem = () => {
+    const confirmAddItem = async () => {
         if (newItemText.trim() === '') {
             RNAlert.alert('오류', `${selectedTab} 이름을 입력해주세요.`);
             return;
         }
 
-        const newItem: ChecklistItem = {
-            id: Date.now().toString(),
-            text: newItemText.trim(),
-            checked: false,
-        };
-
-        setCurrentItems([...currentItems, newItem]);
-        setNewItemText('');
-        setAddModalVisible(false);
+        try {
+            if (selectedTab === '준비물') {
+                const newSupply = await createSupply(planId, {
+                    text: newItemText.trim(),
+                    checked: false,
+                    orderIndex: supplies.length,
+                });
+                setSupplies(prev => [...prev, newSupply]);
+            } else {
+                const newTask = await createTask(planId, {
+                    text: newItemText.trim(),
+                    checked: false,
+                    orderIndex: tasks.length,
+                });
+                setTasks(prev => [...prev, newTask]);
+            }
+            setNewItemText('');
+            setAddModalVisible(false);
+        } catch (error) {
+            console.error('Failed to add item:', error);
+            RNAlert.alert('오류', '추가에 실패했습니다.');
+        }
     };
 
     const cancelAddItem = () => {
@@ -191,7 +200,13 @@ export default function ChecklistScreen() {
             </View>
 
             {/* 체크리스트 내용 */}
-            <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+            <ScrollView
+                style={styles.content}
+                showsVerticalScrollIndicator={false}
+                refreshControl={
+                    <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
+                }
+            >
                 <View style={styles.itemsContainer}>
                     {currentItems.map((item) => (
                         <View key={item.id} style={styles.itemRow}>
@@ -284,6 +299,22 @@ export default function ChecklistScreen() {
                     </View>
                 </View>
             </Modal>
+
+            {/* 하단 네비게이션 바 */}
+            <View style={styles.bottomNav}>
+                <TouchableOpacity style={styles.navItem} onPress={handlePlanDetailPress}>
+                    <MaterialIcons name="calendar-today" size={30} color="#9E9E9E" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.navItem}>
+                    <MaterialIcons name="card-travel" size={32} color="#088CDA" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.navItem} onPress={handleExpensesPress}>
+                    <MaterialIcons name="receipt" size={32} color="#9E9E9E" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.navItem}>
+                    <MaterialIcons name="chat" size={32} color="#9E9E9E" />
+                </TouchableOpacity>
+            </View>
         </View>
     );
 }
@@ -337,10 +368,10 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '400',
         lineHeight: 16,
-        letterSpacing: -0.15,
         color: '#fff',
     },
     tabTextActive: {
+        fontWeight: '400',
         color: '#fff',
     },
     content: {
@@ -348,118 +379,104 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
     },
     itemsContainer: {
-        gap: 16,
+        paddingTop: 16,
     },
     itemRow: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        marginBottom: 16,
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F0F0F0',
     },
     itemLeft: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
-        flex: 1,
     },
     checkbox: {
-        width: 24,
-        height: 24,
-        justifyContent: 'center',
-        alignItems: 'center',
+        marginRight: 12,
     },
     itemText: {
+        flex: 1,
         fontSize: 16,
-        fontWeight: '500',
         lineHeight: 24,
-        letterSpacing: -0.2,
         color: '#000',
     },
     moreIconButton: {
-        width: 24,
-        height: 24,
-        justifyContent: 'center',
-        alignItems: 'center',
+        padding: 4,
     },
     addButton: {
-        backgroundColor: '#C7C7C7',
-        borderRadius: 8,
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        paddingHorizontal: 5,
-        paddingVertical: 4,
-        height: 24,
-        alignSelf: 'flex-start',
-        marginTop: 8,
-    },
-    addButtonText: {
-        fontSize: 12,
-        fontWeight: '600',
-        lineHeight: 16,
-        letterSpacing: -0.15,
-        color: '#fff',
+        paddingVertical: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F0F0F0',
     },
     iconCircle: {
-        width: 16,
-        height: 16,
-        borderRadius: 8,
-        backgroundColor: 'rgba(255, 255, 255, 1)',
+        width: 14,
+        height: 14,
+        borderRadius: 7,
+        backgroundColor: '#fff',
+        borderWidth: 1,
+        borderColor: '#C7C7C7',
         justifyContent: 'center',
         alignItems: 'center',
+        marginRight: 12,
+    },
+    addButtonText: {
+        fontSize: 16,
+        color: '#9E9E9E',
     },
     divider: {
-        width: '100%',
-        height: 16,
-        backgroundColor: '#F6F6F6',
-        marginTop: 32,
+        height: 1,
+        backgroundColor: '#F0F0F0',
+        marginTop: 16,
     },
     modalOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.3)',
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
         justifyContent: 'flex-end',
     },
     bottomSheet: {
         backgroundColor: '#fff',
-        paddingBottom: Platform.OS === 'ios' ? 42 : 16,
+        borderTopLeftRadius: 16,
+        borderTopRightRadius: 16,
+        paddingTop: 24,
+        paddingBottom: Platform.OS === 'ios' ? 40 : 24,
     },
     deleteButton: {
-        backgroundColor: '#fff',
-        borderBottomWidth: 1,
-        borderBottomColor: '#E0E0E0',
-        paddingHorizontal: 20,
         paddingVertical: 16,
+        paddingHorizontal: 24,
+        alignItems: 'center',
     },
     deleteButtonText: {
         fontSize: 16,
-        fontWeight: '600',
-        lineHeight: 24,
-        letterSpacing: -0.2,
-        color: '#000',
+        color: '#FF3B30',
+        fontWeight: '500',
     },
     bottomSheetDivider: {
-        width: '100%',
-        height: 16,
-        backgroundColor: '#F6F6F6',
+        height: 1,
+        backgroundColor: '#F0F0F0',
+        marginTop: 8,
     },
     addItemFullScreen: {
         flex: 1,
         backgroundColor: '#fff',
     },
     addItemFullScreenHeader: {
-        paddingTop: Platform.OS === 'ios' ? 56 : 24,
-        paddingBottom: 8,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
         paddingHorizontal: 16,
+        paddingTop: Platform.OS === 'ios' ? 56 : 24,
+        paddingBottom: 16,
     },
     addItemFullScreenTitle: {
-        fontSize: 16,
+        fontSize: 24,
         fontWeight: '600',
-        lineHeight: 24,
-        letterSpacing: -0.2,
         color: '#000',
-        textAlign: 'center',
-        marginTop: 8,
+        paddingHorizontal: 20,
         marginBottom: 32,
     },
     addItemFullScreenInputContainer: {
@@ -467,16 +484,12 @@ const styles = StyleSheet.create({
     },
     addItemFullScreenInput: {
         fontSize: 16,
-        lineHeight: 24,
-        letterSpacing: -0.2,
         color: '#000',
-        paddingVertical: 8,
-        paddingHorizontal: 0,
+        paddingVertical: 12,
     },
     addItemFullScreenInputUnderline: {
-        height: 2,
-        backgroundColor: '#088CDA',
-        marginTop: 4,
+        height: 1,
+        backgroundColor: '#E0E0E0',
     },
     addItemFullScreenBottom: {
         position: 'absolute',
@@ -484,24 +497,37 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         paddingHorizontal: 20,
-        paddingTop: 8,
-        paddingBottom: Platform.OS === 'ios' ? 42 : 16,
+        paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+        paddingTop: 16,
         backgroundColor: '#fff',
+        borderTopWidth: 1,
+        borderTopColor: '#F0F0F0',
     },
     addItemFullScreenButton: {
         backgroundColor: '#088CDA',
+        paddingVertical: 16,
         borderRadius: 8,
-        height: 40,
         alignItems: 'center',
-        justifyContent: 'center',
     },
     addItemFullScreenButtonText: {
         fontSize: 16,
         fontWeight: '600',
-        lineHeight: 16,
-        letterSpacing: -0.2,
         color: '#fff',
-        textAlign: 'center',
+    },
+    bottomNav: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: '#fff',
+        borderTopWidth: 1,
+        borderTopColor: '#E0E0E0',
+        paddingHorizontal: 40,
+        paddingTop: 8,
+        paddingBottom: Platform.OS === 'ios' ? 34 : 12,
+        height: Platform.OS === 'ios' ? 102 : 72,
+    },
+    navItem: {
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 });
-

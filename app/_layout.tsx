@@ -8,6 +8,13 @@ export default function RootLayout() {
     <UserProvider>
       <PaperProvider theme={MD3LightTheme}>
         <Stack screenOptions={{ headerShown: false }}>
+          {/* Auth screens */}
+          <Stack.Screen name="login" options={{ headerShown: false }} />
+          <Stack.Screen name="auth/email-login" options={{ headerShown: false }} />
+          <Stack.Screen name="auth/register" options={{ headerShown: false }} />
+          <Stack.Screen name="auth/register-success" options={{ headerShown: false }} />
+          
+          {/* Main screens */}
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen
             name="search"

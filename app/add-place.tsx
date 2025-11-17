@@ -189,30 +189,35 @@ export default function AddPlaceScreen() {
         clearRecentSearches();
     };
 
-    const handleAddPlace = (result: SearchResult) => {
+    const handleAddPlace = async (result: SearchResult) => {
         if (!planId || !dayNumber) {
             Alert.alert('오류', '여행 계획 정보를 찾을 수 없습니다.');
             return;
         }
 
-        // 장소 추가
-        addPlaceToDay(planId, parseInt(dayNumber), {
-            name: result.name,
-            address: result.address,
-            latitude: result.latitude,
-            longitude: result.longitude,
-        });
+        try {
+            // 장소 추가
+            await addPlaceToDay(planId, parseInt(dayNumber), {
+                name: result.name,
+                address: result.address,
+                latitude: result.latitude,
+                longitude: result.longitude,
+            });
 
-        Alert.alert(
-            '추가 완료',
-            `${result.name}이(가) ${dayNumber}일차에 추가되었습니다.`,
-            [
-                {
-                    text: '확인',
-                    onPress: () => router.back(),
-                },
-            ]
-        );
+            Alert.alert(
+                '추가 완료',
+                `${result.name}이(가) ${dayNumber}일차에 추가되었습니다.`,
+                [
+                    {
+                        text: '확인',
+                        onPress: () => router.back(),
+                    },
+                ]
+            );
+        } catch (error) {
+            console.error('Failed to add place:', error);
+            Alert.alert('오류', '장소 추가 중 오류가 발생했습니다.');
+        }
     };
 
     return (
