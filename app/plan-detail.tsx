@@ -248,7 +248,7 @@ export default function PlanDetailScreen() {
             return {};
         }
 
-        return place.expenses.reduce<Record<string, number>>((totals, expense) => {
+        return place.expenses.reduce<Record<string, number>>((totals: Record<string, number>, expense) => {
             const currency = expense.currency || 'KRW';
             totals[currency] = (totals[currency] || 0) + expense.amount;
             return totals;

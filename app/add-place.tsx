@@ -1,9 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, TouchableOpacity, TextInput, ScrollView, Platform, Alert, ActivityIndicator } from 'react-native';
-import { Text } from 'react-native-paper';
-import { router, useLocalSearchParams } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
-import { useUser } from '../src/context/UserContext';
+import React, {useState, useEffect} from 'react';
+import {
+    View,
+    StyleSheet,
+    TouchableOpacity,
+    TextInput,
+    ScrollView,
+    Platform,
+    Alert,
+    ActivityIndicator
+} from 'react-native';
+import {Text} from 'react-native-paper';
+import {router, useLocalSearchParams} from 'expo-router';
+import {Feather} from '@expo/vector-icons';
+import {useUser} from '../src/context/UserContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const RECENT_SEARCHES_KEY = 'recent_place_searches';
@@ -26,14 +35,14 @@ type SearchResult = {
 const GOOGLE_MAPS_API_KEY = 'AIzaSyCoD_272LfO6ENbwlzvrnlJlvPh6ysLKSs';
 
 export default function AddPlaceScreen() {
-    const { planId, dayNumber, destination, latitude, longitude } = useLocalSearchParams<{
+    const {planId, dayNumber, destination, latitude, longitude} = useLocalSearchParams<{
         planId: string;
         dayNumber: string;
         destination?: string;
         latitude?: string;
         longitude?: string;
     }>();
-    const { addPlaceToDay } = useUser();
+    const {addPlaceToDay} = useUser();
     const [searchQuery, setSearchQuery] = useState('');
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -97,7 +106,6 @@ export default function AddPlaceScreen() {
 
     const handleDirectAdd = () => {
         // TODO: 직접 장소 추가 모달/화면 구현
-        console.log('Direct add place');
         Alert.alert('안내', '직접 장소 추가 기능은 추후 구현 예정입니다.');
     };
 
@@ -119,7 +127,6 @@ export default function AddPlaceScreen() {
             // 여행지 좌표가 있으면 해당 지역 주변으로 검색 제한
             if (centerLat && centerLng) {
                 url += `&location=${centerLat},${centerLng}&radius=50000`;
-                console.log(`${destination} 주변 50km 이내에서 검색합니다.`);
             } else {
                 // 좌표가 없으면 관련도 순으로 정렬
                 url += `&rankby=prominence`;
@@ -127,12 +134,6 @@ export default function AddPlaceScreen() {
 
             const response = await fetch(url);
             const data = await response.json();
-
-            console.log('Google Places API response:', {
-                status: data.status,
-                resultsCount: data.results?.length || 0,
-                hasNextPage: !!data.next_page_token,
-            });
 
             if (data.status === 'OK' && data.results) {
                 // Google Places API는 기본적으로 최대 20개의 결과를 반환하며,
@@ -145,7 +146,6 @@ export default function AddPlaceScreen() {
                     longitude: place.geometry?.location?.lng,
                 }));
 
-                console.log(`${results.length}개의 검색 결과를 찾았습니다.`);
                 setSearchResults(results);
 
                 // 검색 결과가 너무 적을 때 알림
@@ -226,7 +226,7 @@ export default function AddPlaceScreen() {
             <View style={styles.header}>
                 <View style={styles.searchContainer}>
                     <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-                        <Feather name="arrow-left" size={24} color="#000" />
+                        <Feather name="arrow-left" size={24} color="#000"/>
                     </TouchableOpacity>
                     <View style={styles.searchBar}>
                         <TextInput
@@ -240,7 +240,7 @@ export default function AddPlaceScreen() {
                             autoFocus
                         />
                         <TouchableOpacity onPress={handleSearchSubmit}>
-                            <Feather name="search" size={16} color="#585858" />
+                            <Feather name="search" size={16} color="#585858"/>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -257,7 +257,7 @@ export default function AddPlaceScreen() {
                     {/* 검색 지역 표시 */}
                     {destination && (
                         <View style={styles.locationBadge}>
-                            <Feather name="map-pin" size={12} color="#585858" />
+                            <Feather name="map-pin" size={12} color="#585858"/>
                             <Text style={styles.locationBadgeText}>{destination} 주변</Text>
                         </View>
                     )}
@@ -289,7 +289,7 @@ export default function AddPlaceScreen() {
                 {/* 로딩 표시 */}
                 {isLoading && (
                     <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color="#088CDA" />
+                        <ActivityIndicator size="large" color="#088CDA"/>
                     </View>
                 )}
 

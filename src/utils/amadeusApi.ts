@@ -10,12 +10,6 @@ const getAmadeusConfig = () => {
         return {};
     }
 
-    console.log('Amadeus config loaded:', {
-        hasApiKey: !!extra.amadeus.apiKey,
-        hasApiSecret: !!extra.amadeus.apiSecret,
-        apiKey: extra.amadeus.apiKey?.substring(0, 8) + '...',
-    });
-
     return extra.amadeus;
 };
 
@@ -91,7 +85,6 @@ async function getAccessToken(): Promise<string> {
     // 만료 시간을 현재 시간 + (expires_in - 60초)로 설정 (여유 시간 확보)
     tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
 
-    console.log('Amadeus access token obtained successfully');
     return cachedToken;
 }
 

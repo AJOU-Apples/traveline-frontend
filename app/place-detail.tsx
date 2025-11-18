@@ -1,22 +1,51 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { View, StyleSheet, TouchableOpacity, ScrollView, Platform, Image, Modal, TextInput, Alert, Dimensions } from 'react-native';
-import { Text } from 'react-native-paper';
-import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
-import { Feather, MaterialIcons } from '@expo/vector-icons';
-import { useUser, Expense, Memo } from '../src/context/UserContext';
+import React, {useState, useEffect, useCallback, useRef, useMemo} from 'react';
+import {
+    View,
+    StyleSheet,
+    TouchableOpacity,
+    ScrollView,
+    Platform,
+    Image,
+    Modal,
+    TextInput,
+    Alert,
+    Dimensions
+} from 'react-native';
+import {Text} from 'react-native-paper';
+import {router, useLocalSearchParams, useFocusEffect} from 'expo-router';
+import {Feather, MaterialIcons} from '@expo/vector-icons';
+import {useUser, Expense, Memo} from '../src/context/UserContext';
 import LocationBasedImagePicker from '../components/LocationBasedImagePicker';
-import { getFullImageUrl } from '../src/utils/travelPlanApi';
+import {getFullImageUrl} from '../src/utils/travelPlanApi';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get('window');
 
 export default function PlaceDetailScreen() {
-    const { planId, dayNumber, placeId } = useLocalSearchParams<{
+    const {planId, dayNumber, placeId} = useLocalSearchParams<{
         planId: string;
         dayNumber: string;
         placeId: string;
     }>();
 
-    const { username, authUser, getTravelPlan, uploadPhotoToPlace, getPhotosByPlace, deletePhoto, reorderPhotos, updatePlaceMemo, deletePlaceFromDay, createExpense, getExpensesByPlace, updateExpense, deleteExpense, createMemo, getMemosByPlace, updateMemo, deleteMemo } = useUser();
+    const {
+        username,
+        authUser,
+        getTravelPlan,
+        uploadPhotoToPlace,
+        getPhotosByPlace,
+        deletePhoto,
+        reorderPhotos,
+        updatePlaceMemo,
+        deletePlaceFromDay,
+        createExpense,
+        getExpensesByPlace,
+        updateExpense,
+        deleteExpense,
+        createMemo,
+        getMemosByPlace,
+        updateMemo,
+        deleteMemo
+    } = useUser();
     const [showTimeModal, setShowTimeModal] = useState(false);
     const [showExpenseModal, setShowExpenseModal] = useState(false);
     const [showMemoModal, setShowMemoModal] = useState(false);
@@ -79,7 +108,7 @@ export default function PlaceDetailScreen() {
     const participants = useMemo(() => {
         if (!tripData?.members) {
             // members가 없으면 현재 사용자만 포함
-            return [{ id: authUser?.id.toString() || '', name: username || '나' }];
+            return [{id: authUser?.id.toString() || '', name: username || '나'}];
         }
 
         // ACCEPTED 상태인 멤버만 필터링
@@ -91,22 +120,9 @@ export default function PlaceDetailScreen() {
             }));
     }, [tripData?.members, authUser?.id, username]);
 
-    // 디버깅: place 데이터 확인
-    useEffect(() => {
-        console.log('🏷️ [place-detail] planId:', planId, 'dayNumber:', dayNumber, 'placeId:', placeId);
-        console.log('🏷️ [place-detail] place found:', !!place);
-        if (place) {
-            console.log('🏷️ [place-detail] place.name:', place.name);
-            console.log('🏷️ [place-detail] place.photos count:', place.photos?.length || 0);
-            console.log('🏷️ [place-detail] place.photos:', JSON.stringify(place.photos, null, 2));
-        }
-    }, [place, planId, dayNumber, placeId]);
-
     // place가 삭제되었을 때 자동으로 뒤로 가기
     useEffect(() => {
         if (placeId && tripData && !place) {
-            console.log('⚠️ [place-detail] Place not found, navigating back...');
-            // 약간의 지연을 주어 자연스럽게 전환
             const timer = setTimeout(() => {
                 router.back();
             }, 100);
@@ -119,17 +135,12 @@ export default function PlaceDetailScreen() {
         // place가 존재하지 않으면 API 호출하지 않음 (삭제된 장소 방지)
         if (!placeId || !place || isLoadingRef.current) return;
 
-        console.log('📸 [loadPhotos] Starting to load photos for placeId:', placeId);
         isLoadingRef.current = true;
         setIsLoadingPhotos(true);
 
         try {
             const photos = await getPhotosByPlace(placeId);
-            console.log('📸 [loadPhotos] Loaded photos:', photos?.length || 0, 'photos');
-            console.log('📸 [loadPhotos] Photo details:', JSON.stringify(photos, null, 2));
         } catch (error) {
-            console.error('❌ [loadPhotos] Failed to load photos for place', placeId, ':', error);
-            // 삭제된 장소인 경우 조용히 처리
         } finally {
             setIsLoadingPhotos(false);
             isLoadingRef.current = false;
@@ -141,13 +152,11 @@ export default function PlaceDetailScreen() {
         // place가 존재하지 않으면 API 호출하지 않음 (삭제된 장소 방지)
         if (!placeId || !place || isLoadingExpensesRef.current) return;
 
-        console.log('💰 [loadExpenses] Starting to load expenses for placeId:', placeId);
         isLoadingExpensesRef.current = true;
         setIsLoadingExpenses(true);
 
         try {
             const expenses = await getExpensesByPlace(placeId);
-            console.log('💰 [loadExpenses] Loaded expenses:', expenses?.length || 0, 'expenses');
         } catch (error) {
             console.error('❌ [loadExpenses] Failed to load expenses for place', placeId, ':', error);
             // 삭제된 장소인 경우 조용히 처리
@@ -162,13 +171,11 @@ export default function PlaceDetailScreen() {
         // place가 존재하지 않으면 API 호출하지 않음 (삭제된 장소 방지)
         if (!placeId || !place || isLoadingMemosRef.current) return;
 
-        console.log('📝 [loadMemos] Starting to load memos for placeId:', placeId);
         isLoadingMemosRef.current = true;
         setIsLoadingMemos(true);
 
         try {
             const memos = await getMemosByPlace(placeId);
-            console.log('📝 [loadMemos] Loaded memos:', memos?.length || 0, 'memos');
         } catch (error) {
             console.error('❌ [loadMemos] Failed to load memos for place', placeId, ':', error);
             // 삭제된 장소인 경우 조용히 처리
@@ -217,11 +224,11 @@ export default function PlaceDetailScreen() {
             <View style={styles.container}>
                 <View style={styles.header}>
                     <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                        <Feather name="arrow-left" size={24} color="#000" />
+                        <Feather name="arrow-left" size={24} color="#000"/>
                     </TouchableOpacity>
                 </View>
-                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                    <Text style={{ fontSize: 16, color: '#9E9E9E' }}>장소를 찾을 수 없습니다</Text>
+                <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
+                    <Text style={{fontSize: 16, color: '#9E9E9E'}}>장소를 찾을 수 없습니다</Text>
                 </View>
             </View>
         );
@@ -242,9 +249,6 @@ export default function PlaceDetailScreen() {
     ) => {
         if (planId && placeId) {
             try {
-                console.log('📤 [handleSelectPhotos] Uploading', photoUris.length, 'photos with visibility:', visibility);
-                console.log('📤 [handleSelectPhotos] Existing photo order:', orderedExistingPhotoIds);
-
                 // 업로드된 사진 ID를 순서대로 저장
                 const uploadedPhotoIds: string[] = [];
 
@@ -270,8 +274,6 @@ export default function PlaceDetailScreen() {
 
                 // 순서 업데이트: orderedExistingPhotoIds (사용자가 변경한 기존 사진 순서) + uploadedPhotoIds (새 사진)
                 const newOrder = [...orderedExistingPhotoIds, ...uploadedPhotoIds];
-
-                console.log('📤 [handleSelectPhotos] Final photo order:', newOrder, 'visibility:', visibility);
 
                 // 순서 변경 또는 새 사진 업로드가 있으면 reorderPhotos 호출
                 if (newOrder.length > 0) {
@@ -318,11 +320,8 @@ export default function PlaceDetailScreen() {
     };
 
     const handlePhotoPress = (photoUri: string) => {
-        console.log('🖼️ [handlePhotoPress] photoUri:', photoUri);
-        console.log('🖼️ [handlePhotoPress] showImageModal before:', showImageModal);
         setSelectedImageUri(photoUri);
         setShowImageModal(true);
-        console.log('🖼️ [handlePhotoPress] Modal state updated');
     };
 
     const handleTimeAdd = () => {
@@ -601,10 +600,10 @@ export default function PlaceDetailScreen() {
             {/* 상단바 */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-                    <Feather name="arrow-left" size={24} color="#000" />
+                    <Feather name="arrow-left" size={24} color="#000"/>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={handleMorePress} style={styles.moreButton}>
-                    <Feather name="more-horizontal" size={24} color="#000" />
+                    <Feather name="more-horizontal" size={24} color="#000"/>
                 </TouchableOpacity>
             </View>
 
@@ -618,7 +617,7 @@ export default function PlaceDetailScreen() {
                     <TouchableOpacity
                         onPress={() => {
                             Alert.alert('사진 추가', '어떤 앨범에 추가하시겠습니까?', [
-                                { text: '취소', style: 'cancel' },
+                                {text: '취소', style: 'cancel'},
                                 {
                                     text: '개인 앨범',
                                     onPress: () => {
@@ -637,7 +636,7 @@ export default function PlaceDetailScreen() {
                         }}
                         style={styles.cameraButton}
                     >
-                        <MaterialIcons name="photo-camera" size={32} color="#585858" />
+                        <MaterialIcons name="photo-camera" size={32} color="#585858"/>
                     </TouchableOpacity>
                 </View>
 
@@ -659,7 +658,7 @@ export default function PlaceDetailScreen() {
                     {place.time ? (
                         <View style={styles.timeRow}>
                             <View style={styles.timeInfo}>
-                                <MaterialIcons name="access-time" size={16} color="#585858" />
+                                <MaterialIcons name="access-time" size={16} color="#585858"/>
                                 <Text style={styles.timeText}>{place.time}</Text>
                             </View>
                             <TouchableOpacity onPress={handleTimeAdd}>
@@ -668,14 +667,14 @@ export default function PlaceDetailScreen() {
                         </View>
                     ) : (
                         <TouchableOpacity style={styles.addButton} onPress={handleTimeAdd}>
-                            <Feather name="plus" size={12} color="#fff" />
+                            <Feather name="plus" size={12} color="#fff"/>
                             <Text style={styles.addButtonText}>시간 추가</Text>
                         </TouchableOpacity>
                     )}
                 </View>
 
                 {/* 구분선 */}
-                <View style={styles.divider} />
+                <View style={styles.divider}/>
 
                 {/* 개인 앨범 섹션 */}
                 <View style={styles.section}>
@@ -709,7 +708,7 @@ export default function PlaceDetailScreen() {
                                         onLongPress={() => handleDeletePhoto(photo.id)}
                                     >
                                         <Image
-                                            source={{ uri: fullThumbnailUrl }}
+                                            source={{uri: fullThumbnailUrl}}
                                             style={styles.photoThumbnail}
                                             onLoad={() => {
                                                 setFailedImageIds((prev) => {
@@ -724,7 +723,7 @@ export default function PlaceDetailScreen() {
                                         />
                                         {hasError && (
                                             <View style={styles.photoErrorOverlay}>
-                                                <Feather name="image" size={32} color="#C7C7C7" />
+                                                <Feather name="image" size={32} color="#C7C7C7"/>
                                                 <Text style={styles.photoErrorText}>403</Text>
                                             </View>
                                         )}
@@ -735,7 +734,7 @@ export default function PlaceDetailScreen() {
                                                 handleDeletePhoto(photo.id);
                                             }}
                                         >
-                                            <Feather name="x" size={16} color="#fff" />
+                                            <Feather name="x" size={16} color="#fff"/>
                                         </TouchableOpacity>
                                     </TouchableOpacity>
                                 );
@@ -749,7 +748,7 @@ export default function PlaceDetailScreen() {
                             setShowImagePicker(true);
                         }}
                     >
-                        <Feather name="plus" size={12} color="#fff" />
+                        <Feather name="plus" size={12} color="#fff"/>
                         <Text style={styles.addButtonText}>사진 편집</Text>
                     </TouchableOpacity>
                 </View>
@@ -786,7 +785,7 @@ export default function PlaceDetailScreen() {
                                         onLongPress={() => handleDeletePhoto(photo.id)}
                                     >
                                         <Image
-                                            source={{ uri: fullThumbnailUrl }}
+                                            source={{uri: fullThumbnailUrl}}
                                             style={styles.photoThumbnail}
                                             onLoad={() => {
                                                 setFailedImageIds((prev) => {
@@ -801,7 +800,7 @@ export default function PlaceDetailScreen() {
                                         />
                                         {hasError && (
                                             <View style={styles.photoErrorOverlay}>
-                                                <Feather name="image" size={32} color="#C7C7C7" />
+                                                <Feather name="image" size={32} color="#C7C7C7"/>
                                                 <Text style={styles.photoErrorText}>403</Text>
                                             </View>
                                         )}
@@ -812,7 +811,7 @@ export default function PlaceDetailScreen() {
                                                 handleDeletePhoto(photo.id);
                                             }}
                                         >
-                                            <Feather name="x" size={16} color="#fff" />
+                                            <Feather name="x" size={16} color="#fff"/>
                                         </TouchableOpacity>
                                     </TouchableOpacity>
                                 );
@@ -826,13 +825,13 @@ export default function PlaceDetailScreen() {
                             setShowImagePicker(true);
                         }}
                     >
-                        <Feather name="plus" size={12} color="#fff" />
+                        <Feather name="plus" size={12} color="#fff"/>
                         <Text style={styles.addButtonText}>사진 편집</Text>
                     </TouchableOpacity>
                 </View>
 
                 {/* 구분선 */}
-                <View style={styles.divider} />
+                <View style={styles.divider}/>
 
                 {/* 개인 지출 섹션 */}
                 <View style={styles.section}>
@@ -841,9 +840,9 @@ export default function PlaceDetailScreen() {
                         {(place.expenses?.filter(expense => expense.type === 'PERSONAL').length ?? 0) > 0 && (
                             <Text style={styles.totalAmount}>
                                 총 지출 {(place.expenses ?? [])
-                                    .filter(expense => expense.type === 'PERSONAL')
-                                    .reduce((sum, expense) => sum + expense.amount, 0)
-                                    .toLocaleString()}{getCurrencySymbol()}
+                                .filter(expense => expense.type === 'PERSONAL')
+                                .reduce((sum, expense) => sum + expense.amount, 0)
+                                .toLocaleString()}{getCurrencySymbol()}
                             </Text>
                         )}
                     </View>
@@ -873,7 +872,7 @@ export default function PlaceDetailScreen() {
                     ) : null}
 
                     <TouchableOpacity style={styles.addButton} onPress={() => handleExpenseAdd('PERSONAL')}>
-                        <Feather name="plus" size={12} color="#fff" />
+                        <Feather name="plus" size={12} color="#fff"/>
                         <Text style={styles.addButtonText}>지출 추가</Text>
                     </TouchableOpacity>
                 </View>
@@ -885,9 +884,9 @@ export default function PlaceDetailScreen() {
                         {(place.expenses?.filter(expense => expense.type === 'SHARED').length ?? 0) > 0 && (
                             <Text style={styles.totalAmount}>
                                 총 지출 {(place.expenses ?? [])
-                                    .filter(expense => expense.type === 'SHARED')
-                                    .reduce((sum, expense) => sum + expense.amount, 0)
-                                    .toLocaleString()}{getCurrencySymbol()}
+                                .filter(expense => expense.type === 'SHARED')
+                                .reduce((sum, expense) => sum + expense.amount, 0)
+                                .toLocaleString()}{getCurrencySymbol()}
                             </Text>
                         )}
                     </View>
@@ -910,11 +909,13 @@ export default function PlaceDetailScreen() {
                                                 {expense.amount.toLocaleString()}{getCurrencySymbol()}
                                             </Text>
                                             <View style={styles.expenseTitleContainer}>
-                                                <Text style={styles.expenseTitleText} numberOfLines={1} ellipsizeMode="tail">
+                                                <Text style={styles.expenseTitleText} numberOfLines={1}
+                                                      ellipsizeMode="tail">
                                                     {expense.title}
                                                 </Text>
                                                 {expense.memo && (
-                                                    <Text style={styles.expenseMemoText} numberOfLines={1} ellipsizeMode="tail">
+                                                    <Text style={styles.expenseMemoText} numberOfLines={1}
+                                                          ellipsizeMode="tail">
                                                         {expense.memo}
                                                     </Text>
                                                 )}
@@ -926,13 +927,13 @@ export default function PlaceDetailScreen() {
                     ) : null}
 
                     <TouchableOpacity style={styles.addButton} onPress={() => handleExpenseAdd('SHARED')}>
-                        <Feather name="plus" size={12} color="#fff" />
+                        <Feather name="plus" size={12} color="#fff"/>
                         <Text style={styles.addButtonText}>지출 추가</Text>
                     </TouchableOpacity>
                 </View>
 
                 {/* 구분선 */}
-                <View style={styles.divider} />
+                <View style={styles.divider}/>
 
                 {/* 메모 섹션 */}
                 <View style={styles.section}>
@@ -948,7 +949,7 @@ export default function PlaceDetailScreen() {
                                     onPress={() => handleMemoEdit(memo)}
                                     activeOpacity={0.7}
                                 >
-                                    <MaterialIcons name="account-circle" size={24} color="#C7C7C7" />
+                                    <MaterialIcons name="account-circle" size={24} color="#C7C7C7"/>
                                     <View style={styles.memoContentContainer}>
                                         <Text style={styles.memoUserName}>{memo.author.username}</Text>
                                         <Text style={styles.memoContentText} numberOfLines={1} ellipsizeMode="tail">
@@ -962,7 +963,7 @@ export default function PlaceDetailScreen() {
 
                     {/* 메모 추가 버튼 */}
                     <TouchableOpacity style={styles.addButton} onPress={handleMemoAdd}>
-                        <Feather name="plus" size={12} color="#fff" />
+                        <Feather name="plus" size={12} color="#fff"/>
                         <Text style={styles.addButtonText}>메모 추가</Text>
                     </TouchableOpacity>
                 </View>
@@ -1019,7 +1020,6 @@ export default function PlaceDetailScreen() {
                             <TouchableOpacity
                                 onPress={() => {
                                     // TODO: 시간 저장 구현
-                                    console.log('Save time:', selectedTime);
                                     setShowTimeModal(false);
                                     Alert.alert('안내', '시간 저장 기능은 추후 구현 예정입니다.');
                                 }}
@@ -1060,7 +1060,7 @@ export default function PlaceDetailScreen() {
                                     setEditingExpenseId(null);
                                 }}
                             >
-                                <Feather name="x" size={24} color="#000" />
+                                <Feather name="x" size={24} color="#000"/>
                             </TouchableOpacity>
                         </View>
 
@@ -1128,7 +1128,7 @@ export default function PlaceDetailScreen() {
                                                     {participant.name}
                                                 </Text>
                                                 {expensePaidBy === participant.id && (
-                                                    <Feather name="check" size={16} color="#088CDA" />
+                                                    <Feather name="check" size={16} color="#088CDA"/>
                                                 )}
                                             </TouchableOpacity>
                                         ))}
@@ -1154,7 +1154,7 @@ export default function PlaceDetailScreen() {
                                 </>
                             ) : (
                                 // 추가 모드: 확인만
-                                <TouchableOpacity onPress={handleExpenseSave} style={{ marginLeft: 'auto' }}>
+                                <TouchableOpacity onPress={handleExpenseSave} style={{marginLeft: 'auto'}}>
                                     <Text style={styles.modalConfirmText}>확인</Text>
                                 </TouchableOpacity>
                             )}
@@ -1243,37 +1243,32 @@ export default function PlaceDetailScreen() {
                 transparent={true}
                 animationType="fade"
                 onRequestClose={() => {
-                    console.log('🖼️ [Modal] onRequestClose');
                     setShowImageModal(false);
                 }}
-                onShow={() => console.log('🖼️ [Modal] onShow - selectedImageUri:', selectedImageUri)}
             >
                 <View style={styles.imageModalContainer}>
                     <TouchableOpacity
                         style={styles.imageModalCloseArea}
                         activeOpacity={1}
                         onPress={() => {
-                            console.log('🖼️ [Modal] Close button pressed');
                             setShowImageModal(false);
                         }}
                     >
                         <View style={styles.imageModalHeader}>
                             <TouchableOpacity
                                 onPress={() => {
-                                    console.log('🖼️ [Modal] X button pressed');
                                     setShowImageModal(false);
                                 }}
                                 style={styles.imageModalCloseButton}
                             >
-                                <Feather name="x" size={32} color="#fff" />
+                                <Feather name="x" size={32} color="#fff"/>
                             </TouchableOpacity>
                         </View>
                     </TouchableOpacity>
                     <Image
-                        source={{ uri: selectedImageUri }}
+                        source={{uri: selectedImageUri}}
                         style={styles.fullSizeImage}
                         resizeMode="contain"
-                        onLoad={() => console.log('✅ [Modal Image] Loaded successfully')}
                         onError={(error) => console.error('❌ [Modal Image] Load error:', error.nativeEvent.error)}
                     />
                 </View>
