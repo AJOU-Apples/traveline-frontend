@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { Text } from 'react-native-paper';
-import { router, useLocalSearchParams } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
-import { Calendar, DateData } from 'react-native-calendars';
-import { useUser, TravelDay } from '../src/context/UserContext';
+import React, {useState} from 'react';
+import {View, StyleSheet, TouchableOpacity, Platform} from 'react-native';
+import {Text} from 'react-native-paper';
+import {router, useLocalSearchParams} from 'expo-router';
+import {Feather} from '@expo/vector-icons';
+import {Calendar, DateData} from 'react-native-calendars';
+import {useUser, TravelDay} from '../src/context/UserContext';
 
 export default function DateSelectionScreen() {
-    const { destinationId, destinationName } = useLocalSearchParams<{ destinationId: string; destinationName: string }>();
-    const { addTravelPlan } = useUser();
+    const {destinationId, destinationName} = useLocalSearchParams<{ destinationId: string; destinationName: string }>();
+    const {addTravelPlan} = useUser();
     const [startDate, setStartDate] = useState<string | null>(null);
     const [endDate, setEndDate] = useState<string | null>(null);
 
@@ -128,12 +128,10 @@ export default function DateSelectionScreen() {
                     days,
                 });
 
-                console.log('Created travel plan:', { planId, destinationId, destinationName, startDate, endDate });
-
                 // 여행 계획 상세 화면으로 이동
                 router.push({
                     pathname: '/plan-detail',
-                    params: { planId }
+                    params: {planId}
                 });
             } catch (error) {
                 console.error('Failed to create travel plan:', error);
@@ -155,7 +153,7 @@ export default function DateSelectionScreen() {
             {/* 헤더 */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                    <Feather name="arrow-left" size={24} color="#000" />
+                    <Feather name="arrow-left" size={24} color="#000"/>
                 </TouchableOpacity>
             </View>
 

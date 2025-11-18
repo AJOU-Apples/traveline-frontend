@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
+import {Platform} from 'react-native';
 
 // 플랫폼별 API URL 설정
 // - iOS 시뮬레이터: localhost
@@ -139,8 +139,6 @@ class AuthApi {
 
             // 토큰이 이미 만료되었는지 체크
             if (isTokenExpired(this.accessToken)) {
-                console.log('Access token expired, attempting to refresh...');
-
                 // Refresh 토큰으로 갱신 시도
                 try {
                     await this.refreshAccessToken();
@@ -153,8 +151,6 @@ class AuthApi {
 
             // 토큰이 곧 만료될 예정인지 체크 (7일 이내)
             if (isTokenExpiringSoon(this.accessToken)) {
-                console.log('Access token expiring soon, refreshing...');
-
                 // 백그라운드에서 갱신 (실패해도 현재 토큰은 유효하므로 true 반환)
                 try {
                     await this.refreshAccessToken();
@@ -318,7 +314,7 @@ class AuthApi {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ refreshToken: this.refreshToken }),
+                body: JSON.stringify({refreshToken: this.refreshToken}),
             });
 
             if (!response.ok) {
@@ -351,14 +347,14 @@ class AuthApi {
             headers['Content-Type'] = 'application/json';
         }
 
-        let response = await fetch(url, { ...options, headers });
+        let response = await fetch(url, {...options, headers});
 
         // 토큰이 만료되었으면 갱신 후 재시도
         if (response.status === 401) {
             try {
                 await this.refreshAccessToken();
                 headers.Authorization = `Bearer ${this.accessToken}`;
-                response = await fetch(url, { ...options, headers });
+                response = await fetch(url, {...options, headers});
             } catch (error) {
                 await this.clearTokens();
                 throw error;

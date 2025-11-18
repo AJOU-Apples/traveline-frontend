@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import React, {useEffect} from 'react';
+import {View, Text, TouchableOpacity, StyleSheet, Alert} from 'react-native';
 import * as KakaoLogin from '@react-native-seoul/kakao-login';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
@@ -10,7 +10,7 @@ WebBrowser.maybeCompleteAuthSession();
 /* 네이버 API 기본 정보 */
 const NAVER_CLIENT_ID = 'dxclVS6at59zMGoRJmjS';
 const NAVER_CLIENT_SECRET = 'aQy2kqGyIP';
-const NAVER_REDIRECT_URI = AuthSession.makeRedirectUri({ scheme: 'traveline' });
+const NAVER_REDIRECT_URI = AuthSession.makeRedirectUri({scheme: 'traveline'});
 
 const NAVER_DISCOVERY = {
     authorizationEndpoint: 'https://nid.naver.com/oauth2.0/authorize',
@@ -34,15 +34,14 @@ export default function LoginScreen() {
             redirectUri: NAVER_REDIRECT_URI,
             scopes: [],
             responseType: AuthSession.ResponseType.Code,
-            extraParams: { auth_type: 'reprompt' },
+            extraParams: {auth_type: 'reprompt'},
         },
         NAVER_DISCOVERY
     );
 
     useEffect(() => {
         if (googleResponse?.type === 'success') {
-            const { authentication } = googleResponse;
-            console.log(' Google Access Token:', authentication?.accessToken);
+            const {authentication} = googleResponse;
             Alert.alert('Google 로그인 성공', 'AccessToken이 발급되었습니다!');
         } else if (googleResponse?.type === 'error') {
             console.error(' Google 로그인 오류:', googleResponse.error);
@@ -52,8 +51,7 @@ export default function LoginScreen() {
 
     useEffect(() => {
         if (naverResponse?.type === 'success') {
-            const { code } = naverResponse.params;
-            console.log('네이버 인증 코드:', code);
+            const {code} = naverResponse.params;
 
             (async () => {
                 try {
@@ -61,7 +59,6 @@ export default function LoginScreen() {
                         `${NAVER_DISCOVERY.tokenEndpoint}?grant_type=authorization_code&client_id=${NAVER_CLIENT_ID}&client_secret=${NAVER_CLIENT_SECRET}&code=${code}&state=RANDOM_STATE_STRING`
                     );
                     const tokenData = await tokenResponse.json();
-                    console.log('네이버 토큰 데이터:', tokenData);
                     if (tokenData.access_token) {
                         Alert.alert('네이버 로그인 성공', 'AccessToken이 발급되었습니다!');
                     } else {
@@ -81,7 +78,6 @@ export default function LoginScreen() {
     const handleKakaoLogin = async () => {
         try {
             const token = await KakaoLogin.login();
-            console.log('Kakao Access Token:', token.accessToken);
             Alert.alert('카카오 로그인 성공', 'AccessToken이 발급되었습니다!');
         } catch (error) {
             console.error('카카오 로그인 오류:', error);
