@@ -86,7 +86,7 @@ export const usePlaceMemo = (
         updatedAt: memo.updatedAt,
       }));
 
-      // 상태 업데이트
+      // 상태 업데이트 - 기존 place의 다른 속성들(expenses, photos 등)을 보존
       setTravelPlans((prev) =>
         prev.map((plan) => ({
           ...plan,
@@ -97,6 +97,7 @@ export const usePlaceMemo = (
                 return {
                   ...place,
                   memos: convertedMemos,
+                  // 스프레드 연산자로 인해 다른 속성들(expenses, photos 등)이 자동으로 보존됨
                 };
               }
               return place;
