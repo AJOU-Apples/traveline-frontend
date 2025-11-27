@@ -1347,7 +1347,13 @@ export default function PlanDetailScreen() {
                 >
                     <MaterialIcons name="receipt" size={32} color="#9E9E9E" />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.navItem}>
+                <TouchableOpacity
+                    style={styles.navItem}
+                    onPress={() => router.push({
+                        pathname: '/chat',
+                        params: { planId: planId || '' }
+                    })}
+                >
                     <MaterialIcons name="chat" size={32} color="#9E9E9E" />
                 </TouchableOpacity>
             </View>
