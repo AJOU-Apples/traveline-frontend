@@ -124,6 +124,7 @@ export const usePhoto = (
             });
 
             // travelPlans 상태 업데이트 - 해당 place의 photos를 업데이트
+            // 기존 place의 다른 속성들(expenses, memos 등)을 보존
             setTravelPlans(prevPlans =>
                 prevPlans.map(plan => ({
                     ...plan,
@@ -134,6 +135,7 @@ export const usePhoto = (
                                 return {
                                     ...place,
                                     photos: convertedPhotos,
+                                    // 스프레드 연산자로 인해 다른 속성들(expenses, memos 등)이 자동으로 보존됨
                                 };
                             }
                             return place;

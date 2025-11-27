@@ -19,6 +19,8 @@ import { useUser } from '../src/context/UserContext';
 import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import type { Place, Flight, Accommodation } from '../src/context/UserContext';
+import { useTravelPlanWebSocket } from '../src/hooks/useTravelPlanWebSocket';
+import type { TravelPlanEvent } from '../src/types/webSocket.types';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -143,12 +145,15 @@ const GOOGLE_MAPS_API_KEY = Platform.select({
 
 export default function PlanDetailScreen() {
     const { planId } = useLocalSearchParams<{ planId: string }>();
-    const { getTravelPlan, reorderPlaces, getPlacesByDay, getExpensesByPlace, getFlightsByPlan, getAccommodationsByPlan } = useUser();
+    const { getTravelPlan, reorderPlaces, getPlacesByDay, getExpensesByPlace, getFlightsByPlan, getAccommodationsByPlan, loadTravelPlans } = useUser();
     const [selectedDay, setSelectedDay] = useState(1);
     const [isEditMode, setIsEditMode] = useState(false);
     const [isLoadingPlaces, setIsLoadingPlaces] = useState(false);
     const [flights, setFlights] = useState<Flight[]>([]);
     const [accommodations, setAccommodations] = useState<Accommodation[]>([]);
+
+    // 편집 모드에서 사용할 로컬 places 상태 (편집 중인 순서를 임시 저장)
+    const [editedPlaces, setEditedPlaces] = useState<Place[] | null>(null);
 
     // 중복 로딩 방지를 위한 ref
     const isLoadingPlacesRef = useRef(false);
@@ -180,6 +185,200 @@ export default function PlanDetailScreen() {
             loadFlightsAndAccommodations();
         }, [loadFlightsAndAccommodations])
     );
+
+    // Places 로드 함수
+    const loadPlaces = useCallback(async () => {
+        if (!planId || isLoadingPlacesRef.current) return;
+
+        isLoadingPlacesRef.current = true;
+        setIsLoadingPlaces(true);
+
+        try {
+            await getPlacesByDay(planId, selectedDay);
+
+            // 각 place의 expenses 로드
+            const currentDayData = getTravelPlan(planId)?.days.find(day => day.dayNumber === selectedDay);
+            if (currentDayData?.places) {
+                await Promise.all(
+                    currentDayData.places.map(place =>
+                        getExpensesByPlace(place.id).catch(err => {
+                            console.error(`Failed to load expenses for place ${place.id}:`, err);
+                            return [];
+                        })
+                    )
+                );
+            }
+
+            // 편집 모드가 아니면 편집용 상태 초기화
+            if (!isEditMode) {
+                setEditedPlaces(null);
+            }
+        } catch (error) {
+            console.error('Failed to load places:', error);
+        } finally {
+            setIsLoadingPlaces(false);
+            isLoadingPlacesRef.current = false;
+        }
+    }, [planId, selectedDay, getPlacesByDay, getExpensesByPlace, getTravelPlan, isEditMode]);
+
+    // WebSocket 이벤트 처리
+    const handleWebSocketEvent = useCallback((event: TravelPlanEvent) => {
+        // planId 비교 (문자열/숫자 모두 처리)
+        // planId가 없으면 현재 planId 사용 (WebSocket은 특정 planId에 연결되므로)
+        const eventPlanId = typeof event.planId === 'number' ? event.planId.toString() : (event.planId || planId);
+        if (!planId || !eventPlanId || eventPlanId !== planId) {
+            console.log('WebSocket event ignored - planId mismatch:', { eventPlanId, currentPlanId: planId });
+            return;
+        }
+
+        console.log('WebSocket event received:', event);
+
+        switch (event.entityType) {
+            case 'PLACE':
+                // Place 이벤트: ADDED, UPDATED, DELETED, REORDERED
+                if (event.eventType && ['ADDED', 'UPDATED', 'DELETED', 'REORDERED'].includes(event.eventType)) {
+                    // DELETED 이벤트인 경우 expenses 로드 없이 places만 로드
+                    if (event.eventType === 'DELETED') {
+                        const targetDayNumber = event.data?.dayNumber && typeof event.data.dayNumber === 'number'
+                            ? event.data.dayNumber
+                            : selectedDay;
+
+                        // Places만 다시 로드 (expenses는 로드하지 않음)
+                        getPlacesByDay(planId, targetDayNumber)
+                            .then(() => {
+                                // 편집 모드가 아니면 편집 상태 초기화
+                                if (!isEditMode) {
+                                    setEditedPlaces(null);
+                                }
+                            })
+                            .catch(err => {
+                                console.error('Failed to reload places after DELETE event:', err);
+                            });
+                    } else {
+                        // ADDED, UPDATED, REORDERED: places와 expenses 모두 다시 로드
+                        if (event.data?.dayNumber && typeof event.data.dayNumber === 'number') {
+                            // 특정 day의 이벤트인 경우 해당 day만 로드
+                            getPlacesByDay(planId, event.data.dayNumber)
+                                .then(() => {
+                                    // places 로드 후 expenses 로드
+                                    const currentTripData = getTravelPlan(planId);
+                                    const currentDayData = currentTripData?.days.find(day => day.dayNumber === event.data.dayNumber);
+                                    if (currentDayData?.places) {
+                                        return Promise.all(
+                                            currentDayData.places.map(place =>
+                                                getExpensesByPlace(place.id).catch(err => {
+                                                    // 에러는 무시 (이미 로드된 상태일 수 있음)
+                                                    return [];
+                                                })
+                                            )
+                                        );
+                                    }
+                                })
+                                .catch(err => {
+                                    console.error('Failed to reload places after WebSocket event:', err);
+                                });
+                        } else {
+                            // day 정보가 없으면 현재 선택된 day 로드 (expenses 포함)
+                            loadPlaces();
+                        }
+                    }
+                }
+                break;
+
+            case 'EXPENSE':
+                // Expense 이벤트: ADDED, UPDATED, DELETED
+                if (event.eventType && ['ADDED', 'UPDATED', 'DELETED'].includes(event.eventType)) {
+                    // 현재 선택된 day의 places의 expenses 다시 로드
+                    if (planId) {
+                        const currentTripData = getTravelPlan(planId);
+                        const currentDayData = currentTripData?.days.find(day => day.dayNumber === selectedDay);
+                        if (currentDayData?.places) {
+                            Promise.all(
+                                currentDayData.places.map(place =>
+                                    getExpensesByPlace(place.id).catch(err => {
+                                        console.error(`Failed to reload expenses for place ${place.id}:`, err);
+                                        return [];
+                                    })
+                                )
+                            ).catch(err => {
+                                console.error('Failed to reload expenses after WebSocket event:', err);
+                            });
+                        }
+                    }
+                }
+                break;
+
+            case 'PHOTO':
+                // Photo 이벤트: ADDED
+                if (event.eventType === 'ADDED') {
+                    // Photo가 추가되면 해당 place의 데이터를 다시 로드
+                    if (planId && event.data?.placeId) {
+                        const targetDayNumber = event.data?.dayNumber && typeof event.data.dayNumber === 'number'
+                            ? event.data.dayNumber
+                            : selectedDay;
+
+                        // 해당 day의 places 다시 로드 (photos 정보 업데이트)
+                        getPlacesByDay(planId, targetDayNumber)
+                            .catch(err => {
+                                console.error('Failed to reload places after PHOTO_ADDED event:', err);
+                            });
+                    }
+                }
+                break;
+
+            case 'FLIGHT':
+                // Flight 이벤트: UPDATED
+                if (event.eventType === 'UPDATED') {
+                    loadFlightsAndAccommodations();
+                }
+                break;
+
+            case 'ACCOMMODATION':
+                // Accommodation 이벤트: UPDATED
+                if (event.eventType === 'UPDATED') {
+                    loadFlightsAndAccommodations();
+                }
+                break;
+
+            case 'MEMO':
+                // Memo 이벤트: ADDED, UPDATED, DELETED
+                if (event.eventType && ['ADDED', 'UPDATED', 'DELETED'].includes(event.eventType)) {
+                    // Memo가 변경되면 해당 place의 데이터를 다시 로드
+                    if (planId && event.data?.placeId) {
+                        const targetDayNumber = event.data?.dayNumber && typeof event.data.dayNumber === 'number'
+                            ? event.data.dayNumber
+                            : selectedDay;
+
+                        // 해당 day의 places 다시 로드 (memos 정보 업데이트)
+                        getPlacesByDay(planId, targetDayNumber)
+                            .catch(err => {
+                                console.error('Failed to reload places after MEMO event:', err);
+                            });
+                    }
+                }
+                break;
+
+            case 'MEMBER':
+                // Member 이벤트: JOINED, LEFT
+                if (event.eventType && ['JOINED', 'LEFT'].includes(event.eventType)) {
+                    // Travel plan 정보 다시 로드 (participants 정보 업데이트)
+                    loadTravelPlans().catch(err => {
+                        console.error('Failed to reload travel plan after member event:', err);
+                    });
+                }
+                break;
+
+            default:
+                console.log('Unhandled WebSocket event type:', event.entityType);
+        }
+    }, [planId, selectedDay, isEditMode, getTravelPlan, getPlacesByDay, getExpensesByPlace, loadPlaces, loadFlightsAndAccommodations, loadTravelPlans]);
+
+    // WebSocket 연결 및 이벤트 핸들링
+    useTravelPlanWebSocket({
+        planId: planId || undefined,
+        onEvent: handleWebSocketEvent,
+        enabled: !!planId,
+    });
 
     const selectedFlights = useMemo(() => flights.filter((flight) => flight.isSelected), [flights]);
     const selectedAccommodations = useMemo(
@@ -311,36 +510,6 @@ export default function PlanDetailScreen() {
         })
     ).current;
 
-    // Places 로드 함수
-    const loadPlaces = async () => {
-        if (!planId || isLoadingPlacesRef.current) return;
-
-        isLoadingPlacesRef.current = true;
-        setIsLoadingPlaces(true);
-
-        try {
-            await getPlacesByDay(planId, selectedDay);
-
-            // 각 place의 expenses 로드
-            const currentDayData = getTravelPlan(planId)?.days.find(day => day.dayNumber === selectedDay);
-            if (currentDayData?.places) {
-                await Promise.all(
-                    currentDayData.places.map(place =>
-                        getExpensesByPlace(place.id).catch(err => {
-                            console.error(`Failed to load expenses for place ${place.id}:`, err);
-                            return [];
-                        })
-                    )
-                );
-            }
-        } catch (error) {
-            console.error('Failed to load places:', error);
-        } finally {
-            setIsLoadingPlaces(false);
-            isLoadingPlacesRef.current = false;
-        }
-    };
-
     // 화면 포커스될 때 places 로드
     useFocusEffect(
         useCallback(() => {
@@ -395,9 +564,17 @@ export default function PlanDetailScreen() {
     }, [tripData?.destinationCity]);
 
     // 선택한 일차의 장소들을 마커로 표시
-    const markers = useMemo(() => {
+    // 편집 모드에서는 editedPlaces 사용, 아닐 때는 currentDayData.places 사용
+    const placesToDisplay = useMemo(() => {
+        if (isEditMode && editedPlaces !== null) {
+            return editedPlaces;
+        }
         return currentDayData?.places || [];
-    }, [currentDayData]);
+    }, [isEditMode, editedPlaces, currentDayData]);
+
+    const markers = useMemo(() => {
+        return placesToDisplay;
+    }, [placesToDisplay]);
 
     const extractDateFromValue = useCallback((value?: string) => {
         if (!value) return undefined;
@@ -637,8 +814,8 @@ export default function PlanDetailScreen() {
 
     // 장소 카드 렌더링 함수
     const renderPlaceItem = ({ item: place, getIndex, drag, isActive }: RenderItemParams<Place>) => {
-        const currentDayData = tripData.days.find(day => day.dayNumber === selectedDay);
-        if (!currentDayData) return null;
+        const currentPlaces = placesToDisplay;
+        if (!currentPlaces || currentPlaces.length === 0) return null;
 
         const index = getIndex();
         if (index === undefined) return null;
@@ -658,17 +835,17 @@ export default function PlanDetailScreen() {
                         </View>
                         <View style={[
                             styles.connectionLineContainer,
-                            index === currentDayData.places.length - 1 && styles.lastConnectionLine
+                            index === currentPlaces.length - 1 && styles.lastConnectionLine
                         ]}>
                             <View style={styles.connectionLine} />
                             {/* 거리 표시 (마지막 항목은 투명) */}
                             <View style={[
                                 styles.distanceBadge,
-                                index === currentDayData.places.length - 1 && { opacity: 0 }
+                                index === currentPlaces.length - 1 && { opacity: 0 }
                             ]}>
                                 <Text style={styles.distanceText}>
                                     {(() => {
-                                        const nextPlace = currentDayData.places[index + 1];
+                                        const nextPlace = currentPlaces[index + 1];
                                         if (nextPlace &&
                                             place.latitude && place.longitude &&
                                             nextPlace.latitude && nextPlace.longitude) {
@@ -1058,7 +1235,30 @@ export default function PlanDetailScreen() {
                         <Text style={styles.dayLabel}>{currentDayData?.dayNumber}일차</Text>
                         <Text style={styles.dayDate}>{currentDayData?.displayDate}</Text>
                     </View>
-                    <TouchableOpacity onPress={() => setIsEditMode(!isEditMode)}>
+                    <TouchableOpacity onPress={async () => {
+                        if (isEditMode) {
+                            // 완료 버튼: 편집 모드 종료 및 변경사항 저장
+                            if (editedPlaces !== null && planId) {
+                                const placeIds = editedPlaces.map(place => place.id);
+                                try {
+                                    await reorderPlaces(planId, selectedDay, placeIds);
+                                    setEditedPlaces(null); // 편집 상태 초기화
+                                    setIsEditMode(false);
+                                } catch (error) {
+                                    console.error('Failed to save reordered places:', error);
+                                    // 에러 발생 시 편집 모드 유지 (사용자가 다시 시도할 수 있도록)
+                                }
+                            } else {
+                                setIsEditMode(false);
+                            }
+                        } else {
+                            // 편집 버튼: 편집 모드 시작
+                            if (currentDayData?.places) {
+                                setEditedPlaces([...currentDayData.places]); // 현재 places를 편집용 상태로 복사
+                            }
+                            setIsEditMode(true);
+                        }
+                    }}>
                         <Text style={styles.editText}>{isEditMode ? '완료' : '편집'}</Text>
                     </TouchableOpacity>
                 </View>
@@ -1076,13 +1276,21 @@ export default function PlanDetailScreen() {
                 {/* 일정 내용 */}
                 <View style={styles.scheduleContentContainer}>
                     <DraggableFlatList
-                        data={currentDayData?.places || []}
+                        data={placesToDisplay}
                         renderItem={renderPlaceItem}
                         keyExtractor={(item) => item.id}
                         onDragEnd={({ data, from, to }) => {
-                            if (from !== to && planId) {
-                                const placeIds = data.map(place => place.id);
-                                reorderPlaces(planId, selectedDay, placeIds);
+                            if (from !== to) {
+                                if (isEditMode) {
+                                    // 편집 모드: 로컬 상태만 업데이트
+                                    setEditedPlaces(data);
+                                } else {
+                                    // 일반 모드: 즉시 서버에 저장
+                                    if (planId) {
+                                        const placeIds = data.map(place => place.id);
+                                        reorderPlaces(planId, selectedDay, placeIds);
+                                    }
+                                }
                             }
                         }}
                         activationDistance={isEditMode ? 10 : 999999}
@@ -1096,7 +1304,7 @@ export default function PlanDetailScreen() {
                                         {renderFlightScheduleCard(flight, 'top', index, flightsTop.length)}
                                     </React.Fragment>
                                 ))}
-                                {!(currentDayData?.places?.length || hasFlights) && (
+                                {!(placesToDisplay.length || hasFlights) && (
                                     <View style={styles.emptyPlaces}>
                                         <Text style={styles.emptyPlacesText}>아직 추가된 장소가 없습니다</Text>
                                     </View>
