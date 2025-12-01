@@ -1,31 +1,6 @@
 import { authApi } from './authApi';
-import { Platform } from 'react-native';
 import { CityDto } from './cityApi';
-
-// 플랫폼별 API URL 설정
-const getApiBaseUrl = () => {
-    if (__DEV__) {
-        if (Platform.OS === 'android') {
-            return 'http://10.0.2.2:8080/api';
-        } else {
-            return 'http://localhost:8080/api';
-        }
-    } else {
-        return 'https://your-production-server.com/api';
-    }
-};
-
-const getServerBaseUrl = () => {
-    if (__DEV__) {
-        if (Platform.OS === 'android') {
-            return 'http://10.0.2.2:8080';
-        } else {
-            return 'http://localhost:8080';
-        }
-    } else {
-        return 'https://your-production-server.com';
-    }
-};
+import { getApiBaseUrl, getServerBaseUrl } from './apiConfig';
 
 const API_BASE_URL = getApiBaseUrl();
 const SERVER_BASE_URL = getServerBaseUrl();
@@ -1966,7 +1941,30 @@ class TravelPlanApi {
                 throw new Error('멤버 목록 조회에 실패했습니다.');
             }
 
-            return response.json();
+            const data = await response.json();
+
+            // 응답이 배열인지 확인
+            if (Array.isArray(data)) {
+                return data;
+            }
+
+            // 응답이 객체로 감싸져 있는 경우 처리
+            if (data && typeof data === 'object') {
+                // 일반적인 응답 구조 확인
+                if (Array.isArray(data.members)) {
+                    return data.members;
+                }
+                if (Array.isArray(data.data)) {
+                    return data.data;
+                }
+                if (Array.isArray(data.content)) {
+                    return data.content;
+                }
+            }
+
+            // 배열이 아니면 빈 배열 반환
+            console.warn('API 응답이 배열이 아닙니다:', data);
+            return [];
         } catch (error) {
             console.error('Get members error:', error);
             throw error;

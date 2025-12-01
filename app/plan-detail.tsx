@@ -8,7 +8,9 @@ import {
     Dimensions,
     Animated,
     PanResponder,
-    type ViewStyle
+    type ViewStyle,
+    Modal,
+    Pressable,
 } from 'react-native';
 import { Text } from 'react-native-paper';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
@@ -151,6 +153,7 @@ export default function PlanDetailScreen() {
     const [isLoadingPlaces, setIsLoadingPlaces] = useState(false);
     const [flights, setFlights] = useState<Flight[]>([]);
     const [accommodations, setAccommodations] = useState<Accommodation[]>([]);
+    const [showSidePanel, setShowSidePanel] = useState(false);
 
     // 편집 모드에서 사용할 로컬 places 상태 (편집 중인 순서를 임시 저장)
     const [editedPlaces, setEditedPlaces] = useState<Place[] | null>(null);
@@ -1077,7 +1080,10 @@ export default function PlanDetailScreen() {
                 <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
                     <Feather name="x" size={24} color="#000" />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.moreButton}>
+                <TouchableOpacity
+                    style={styles.moreButton}
+                    onPress={() => setShowSidePanel(true)}
+                >
                     <Feather name="more-horizontal" size={24} color="#000" />
                 </TouchableOpacity>
             </View>
@@ -1357,6 +1363,62 @@ export default function PlanDetailScreen() {
                     <MaterialIcons name="chat" size={32} color="#9E9E9E" />
                 </TouchableOpacity>
             </View>
+
+            {/* Side Panel Modal */}
+            <Modal
+                visible={showSidePanel}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setShowSidePanel(false)}
+            >
+                <Pressable
+                    style={styles.sidePanelOverlay}
+                    onPress={() => setShowSidePanel(false)}
+                >
+                    <Pressable
+                        style={styles.sidePanel}
+                        onPress={(e) => e.stopPropagation()}
+                    >
+                        {/* Side Panel Header */}
+                        <View style={styles.sidePanelHeader}>
+                            <TouchableOpacity
+                                onPress={() => setShowSidePanel(false)}
+                                style={styles.sidePanelCloseButton}
+                            >
+                                <Feather name="x" size={24} color="#000" />
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* Side Panel Menu Items */}
+                        <View style={styles.sidePanelContent}>
+                            <TouchableOpacity
+                                style={styles.sidePanelMenuItem}
+                                onPress={() => {
+                                    setShowSidePanel(false);
+                                    router.push({
+                                        pathname: '/participants',
+                                        params: { planId: planId || '' },
+                                    });
+                                }}
+                            >
+                                <Feather name="user-plus" size={16} color="#000" />
+                                <Text style={styles.sidePanelMenuItemText}>참여자 편집하기</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.sidePanelMenuItem}
+                                onPress={() => {
+                                    setShowSidePanel(false);
+                                    // TODO: Implement travel journal creation
+                                }}
+                            >
+                                <Feather name="book" size={16} color="#000" />
+                                <Text style={styles.sidePanelMenuItemText}>여행기 생성하기</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
         </GestureHandlerRootView>
     );
 }
@@ -1878,6 +1940,51 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '700',
         color: '#fff',
+    },
+    sidePanelOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.3)',
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+    },
+    sidePanel: {
+        width: 280,
+        height: '100%',
+        backgroundColor: '#E0E0E0',
+    },
+    sidePanelHeader: {
+        backgroundColor: '#fff',
+        borderBottomWidth: 1,
+        borderBottomColor: '#E0E0E0',
+        height: 88,
+        justifyContent: 'flex-end',
+        paddingBottom: 8,
+        paddingLeft: 8,
+        paddingTop: 56,
+    },
+    sidePanelCloseButton: {
+        width: 24,
+        height: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    sidePanelContent: {
+        backgroundColor: '#fff',
+    },
+    sidePanelMenuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        padding: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#E0E0E0',
+    },
+    sidePanelMenuItemText: {
+        fontSize: 16,
+        fontWeight: '500',
+        lineHeight: 20,
+        letterSpacing: -0.2,
+        color: '#000',
     },
 });
 

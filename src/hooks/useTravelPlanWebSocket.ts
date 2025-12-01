@@ -1,23 +1,8 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { Platform, AppState, AppStateStatus } from 'react-native';
+import { AppState, AppStateStatus } from 'react-native';
 import { authApi } from '../utils/authApi';
+import { getWebSocketUrl } from '../utils/apiConfig';
 import type { TravelPlanEvent, WebSocketStatus, UseTravelPlanWebSocketOptions } from '../types/webSocket.types';
-
-// WebSocket URL 설정
-const getWebSocketUrl = (planId: string, token: string): string => {
-    if (__DEV__) {
-        // 개발 모드
-        if (Platform.OS === 'android') {
-            return `ws://10.0.2.2:8080/ws/travel-plans/${planId}?token=${token}`;
-        } else {
-            return `ws://localhost:8080/ws/travel-plans/${planId}?token=${token}`;
-        }
-    } else {
-        // 프로덕션 모드 - 실제 서버 URL로 변경 필요
-        const baseUrl = 'wss://your-production-server.com';
-        return `${baseUrl}/ws/travel-plans/${planId}?token=${token}`;
-    }
-};
 
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
 const DEFAULT_RECONNECT_DELAY = 3000; // 3초
@@ -80,7 +65,7 @@ export const useTravelPlanWebSocket = ({
 
         try {
             statusRef.current = 'connecting';
-            const wsUrl = getWebSocketUrl(planId, token);
+            const wsUrl = getWebSocketUrl(`/ws/travel-plans/${planId}`, token);
             console.log('Connecting to WebSocket:', wsUrl);
 
             const ws = new WebSocket(wsUrl);

@@ -1,23 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {Platform} from 'react-native';
-
-// 플랫폼별 API URL 설정
-// - iOS 시뮬레이터: localhost
-// - Android 에뮬레이터: 10.0.2.2 (에뮬레이터의 호스트 머신을 가리킴)
-// - 실제 디바이스: 컴퓨터의 실제 IP 주소 (예: 192.168.0.10)
-const getApiBaseUrl = () => {
-    if (__DEV__) {
-        // 개발 모드
-        if (Platform.OS === 'android') {
-            return 'http://10.0.2.2:8080/api'; // Android 에뮬레이터
-        } else {
-            return 'http://localhost:8080/api'; // iOS 시뮬레이터
-        }
-    } else {
-        // 프로덕션 모드 - 실제 서버 URL로 변경 필요
-        return 'https://your-production-server.com/api';
-    }
-};
+import { getApiBaseUrl } from './apiConfig';
 
 const API_BASE_URL = getApiBaseUrl();
 
@@ -314,7 +296,7 @@ class AuthApi {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({refreshToken: this.refreshToken}),
+                body: JSON.stringify({ refreshToken: this.refreshToken }),
             });
 
             if (!response.ok) {
@@ -347,14 +329,14 @@ class AuthApi {
             headers['Content-Type'] = 'application/json';
         }
 
-        let response = await fetch(url, {...options, headers});
+        let response = await fetch(url, { ...options, headers });
 
         // 토큰이 만료되었으면 갱신 후 재시도
         if (response.status === 401) {
             try {
                 await this.refreshAccessToken();
                 headers.Authorization = `Bearer ${this.accessToken}`;
-                response = await fetch(url, {...options, headers});
+                response = await fetch(url, { ...options, headers });
             } catch (error) {
                 await this.clearTokens();
                 throw error;

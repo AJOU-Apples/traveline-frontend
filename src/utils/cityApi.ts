@@ -1,19 +1,4 @@
-import { Platform } from 'react-native';
-
-// 플랫폼별 API URL 설정
-const getApiBaseUrl = () => {
-    if (__DEV__) {
-        // 개발 모드
-        if (Platform.OS === 'android') {
-            return 'http://10.0.2.2:8080/api'; // Android 에뮬레이터
-        } else {
-            return 'http://localhost:8080/api'; // iOS 시뮬레이터
-        }
-    } else {
-        // 프로덕션 모드 - 실제 서버 URL로 변경 필요
-        return 'https://your-production-server.com/api';
-    }
-};
+import { getApiBaseUrl } from './apiConfig';
 
 const API_BASE_URL = getApiBaseUrl();
 
