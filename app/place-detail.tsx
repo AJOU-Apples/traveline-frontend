@@ -4,6 +4,7 @@ import {
     StyleSheet,
     TouchableOpacity,
     ScrollView,
+    FlatList,
     Platform,
     Image,
     Modal,
@@ -14,6 +15,7 @@ import {
 import { Text } from 'react-native-paper';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUser, Expense, Memo } from '../src/context/UserContext';
 import LocationBasedImagePicker from '../components/LocationBasedImagePicker';
 import { getFullImageUrl } from '../src/utils/travelPlanApi';
@@ -23,6 +25,7 @@ import type { TravelPlanEvent } from '../src/types/webSocket.types';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function PlaceDetailScreen() {
+    const insets = useSafeAreaInsets();
     const { planId, dayNumber, placeId } = useLocalSearchParams<{
         planId: string;
         dayNumber: string;
@@ -129,6 +132,32 @@ export default function PlaceDetailScreen() {
                 name: member.username,
             }));
     }, [tripData?.members, authUser?.id, username]);
+
+    // 개인 앨범 사진 목록 (정렬된)
+    const personalPhotos = useMemo(() => {
+        if (!place?.photos) return [];
+        return place.photos
+            .filter((photo) => photo.visibility === 'PERSONAL')
+            .sort((a, b) => {
+                if (a.orderIndex !== undefined && b.orderIndex !== undefined) {
+                    return a.orderIndex - b.orderIndex;
+                }
+                return new Date(b.timestamp || b.uploadedAt).getTime() - new Date(a.timestamp || a.uploadedAt).getTime();
+            });
+    }, [place?.photos]);
+
+    // 공유 앨범 사진 목록 (정렬된)
+    const sharedPhotos = useMemo(() => {
+        if (!place?.photos) return [];
+        return place.photos
+            .filter((photo) => photo.visibility === 'SHARED')
+            .sort((a, b) => {
+                if (a.orderIndex !== undefined && b.orderIndex !== undefined) {
+                    return a.orderIndex - b.orderIndex;
+                }
+                return new Date(b.timestamp || b.uploadedAt).getTime() - new Date(a.timestamp || a.uploadedAt).getTime();
+            });
+    }, [place?.photos]);
 
     // place가 삭제되었을 때 자동으로 뒤로 가기
     useEffect(() => {
@@ -324,7 +353,7 @@ export default function PlaceDetailScreen() {
     if (!tripData || !place) {
         return (
             <View style={styles.container}>
-                <View style={styles.header}>
+                <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
                     <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
                         <Feather name="arrow-left" size={24} color="#000" />
                     </TouchableOpacity>
@@ -700,7 +729,7 @@ export default function PlaceDetailScreen() {
     return (
         <View style={styles.container}>
             {/* 상단바 */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
                 <TouchableOpacity onPress={handleBack} style={styles.backButton}>
                     <Feather name="arrow-left" size={24} color="#000" />
                 </TouchableOpacity>
@@ -781,67 +810,66 @@ export default function PlaceDetailScreen() {
                 {/* 개인 앨범 섹션 */}
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>개인 앨범</Text>
-                    <ScrollView
+                    <FlatList
                         horizontal
-                        showsHorizontalScrollIndicator={false}
+                        data={personalPhotos}
+                        keyExtractor={(item) => item.id}
                         style={styles.photoSection}
-                        contentContainerStyle={styles.photoSectionContent}
-                    >
-                        {/* PERSONAL 사진만 필터링 후 orderIndex로 정렬 */}
-                        {place.photos
-                            ?.filter((photo) => photo.visibility === 'PERSONAL')
-                            .sort((a, b) => {
-                                // orderIndex가 있으면 그것으로 정렬, 없으면 timestamp로 정렬
-                                if (a.orderIndex !== undefined && b.orderIndex !== undefined) {
-                                    return a.orderIndex - b.orderIndex;
-                                }
-                                // orderIndex가 없으면 timestamp로 정렬 (최신순)
-                                return new Date(b.timestamp || b.uploadedAt).getTime() - new Date(a.timestamp || a.uploadedAt).getTime();
-                            })
-                            .map((photo) => {
-                                const fullImageUrl = getFullImageUrl(photo.uri);
-                                const fullThumbnailUrl = getFullImageUrl(photo.thumbnailUri);
-                                const hasError = failedImageIds.has(photo.id);
-                                return (
+                        renderItem={({ item: photo }) => {
+                            const fullImageUrl = getFullImageUrl(photo.uri);
+                            const fullThumbnailUrl = getFullImageUrl(photo.thumbnailUri);
+                            const hasError = failedImageIds.has(photo.id);
+                            return (
+                                <TouchableOpacity
+                                    style={styles.photoContainer}
+                                    onPress={() => handlePhotoPress(fullImageUrl)}
+                                    onLongPress={() => handleDeletePhoto(photo.id)}
+                                >
+                                    <Image
+                                        source={{ uri: fullThumbnailUrl }}
+                                        style={styles.photoThumbnail}
+                                        resizeMode="cover"
+                                        onLoad={() => {
+                                            setFailedImageIds((prev) => {
+                                                const newSet = new Set(prev);
+                                                newSet.delete(photo.id);
+                                                return newSet;
+                                            });
+                                        }}
+                                        onError={() => {
+                                            setFailedImageIds((prev) => new Set(prev).add(photo.id));
+                                        }}
+                                    />
+                                    {hasError && (
+                                        <View style={styles.photoErrorOverlay}>
+                                            <Feather name="image" size={32} color="#C7C7C7" />
+                                            <Text style={styles.photoErrorText}>403</Text>
+                                        </View>
+                                    )}
                                     <TouchableOpacity
-                                        key={photo.id}
-                                        style={styles.photoContainer}
-                                        onPress={() => handlePhotoPress(fullImageUrl)}
-                                        onLongPress={() => handleDeletePhoto(photo.id)}
+                                        style={styles.deletePhotoButton}
+                                        onPress={(e) => {
+                                            e.stopPropagation();
+                                            handleDeletePhoto(photo.id);
+                                        }}
                                     >
-                                        <Image
-                                            source={{ uri: fullThumbnailUrl }}
-                                            style={styles.photoThumbnail}
-                                            onLoad={() => {
-                                                setFailedImageIds((prev) => {
-                                                    const newSet = new Set(prev);
-                                                    newSet.delete(photo.id);
-                                                    return newSet;
-                                                });
-                                            }}
-                                            onError={() => {
-                                                setFailedImageIds((prev) => new Set(prev).add(photo.id));
-                                            }}
-                                        />
-                                        {hasError && (
-                                            <View style={styles.photoErrorOverlay}>
-                                                <Feather name="image" size={32} color="#C7C7C7" />
-                                                <Text style={styles.photoErrorText}>403</Text>
-                                            </View>
-                                        )}
-                                        <TouchableOpacity
-                                            style={styles.deletePhotoButton}
-                                            onPress={(e) => {
-                                                e.stopPropagation();
-                                                handleDeletePhoto(photo.id);
-                                            }}
-                                        >
-                                            <Feather name="x" size={16} color="#fff" />
-                                        </TouchableOpacity>
+                                        <Feather name="x" size={16} color="#fff" />
                                     </TouchableOpacity>
-                                );
-                            })}
-                    </ScrollView>
+                                </TouchableOpacity>
+                            );
+                        }}
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.photoSectionContent}
+                        removeClippedSubviews={true}
+                        maxToRenderPerBatch={10}
+                        windowSize={5}
+                        initialNumToRender={5}
+                        getItemLayout={(data, index) => ({
+                            length: 106 + 8,
+                            offset: (106 + 8) * index,
+                            index,
+                        })}
+                    />
                     {/* 사진 편집 버튼 (개인) */}
                     <TouchableOpacity
                         style={styles.addButton}
@@ -858,67 +886,66 @@ export default function PlaceDetailScreen() {
                 {/* 공유한 앨범 섹션 */}
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>공유한 앨범</Text>
-                    <ScrollView
+                    <FlatList
                         horizontal
-                        showsHorizontalScrollIndicator={false}
+                        data={sharedPhotos}
+                        keyExtractor={(item) => item.id}
                         style={styles.photoSection}
-                        contentContainerStyle={styles.photoSectionContent}
-                    >
-                        {/* SHARED 사진만 필터링 후 orderIndex로 정렬 */}
-                        {place.photos
-                            ?.filter((photo) => photo.visibility === 'SHARED')
-                            .sort((a, b) => {
-                                // orderIndex가 있으면 그것으로 정렬, 없으면 timestamp로 정렬
-                                if (a.orderIndex !== undefined && b.orderIndex !== undefined) {
-                                    return a.orderIndex - b.orderIndex;
-                                }
-                                // orderIndex가 없으면 timestamp로 정렬 (최신순)
-                                return new Date(b.timestamp || b.uploadedAt).getTime() - new Date(a.timestamp || a.uploadedAt).getTime();
-                            })
-                            .map((photo) => {
-                                const fullImageUrl = getFullImageUrl(photo.uri);
-                                const fullThumbnailUrl = getFullImageUrl(photo.thumbnailUri);
-                                const hasError = failedImageIds.has(photo.id);
-                                return (
+                        renderItem={({ item: photo }) => {
+                            const fullImageUrl = getFullImageUrl(photo.uri);
+                            const fullThumbnailUrl = getFullImageUrl(photo.thumbnailUri);
+                            const hasError = failedImageIds.has(photo.id);
+                            return (
+                                <TouchableOpacity
+                                    style={styles.photoContainer}
+                                    onPress={() => handlePhotoPress(fullImageUrl)}
+                                    onLongPress={() => handleDeletePhoto(photo.id)}
+                                >
+                                    <Image
+                                        source={{ uri: fullThumbnailUrl }}
+                                        style={styles.photoThumbnail}
+                                        resizeMode="cover"
+                                        onLoad={() => {
+                                            setFailedImageIds((prev) => {
+                                                const newSet = new Set(prev);
+                                                newSet.delete(photo.id);
+                                                return newSet;
+                                            });
+                                        }}
+                                        onError={() => {
+                                            setFailedImageIds((prev) => new Set(prev).add(photo.id));
+                                        }}
+                                    />
+                                    {hasError && (
+                                        <View style={styles.photoErrorOverlay}>
+                                            <Feather name="image" size={32} color="#C7C7C7" />
+                                            <Text style={styles.photoErrorText}>403</Text>
+                                        </View>
+                                    )}
                                     <TouchableOpacity
-                                        key={photo.id}
-                                        style={styles.photoContainer}
-                                        onPress={() => handlePhotoPress(fullImageUrl)}
-                                        onLongPress={() => handleDeletePhoto(photo.id)}
+                                        style={styles.deletePhotoButton}
+                                        onPress={(e) => {
+                                            e.stopPropagation();
+                                            handleDeletePhoto(photo.id);
+                                        }}
                                     >
-                                        <Image
-                                            source={{ uri: fullThumbnailUrl }}
-                                            style={styles.photoThumbnail}
-                                            onLoad={() => {
-                                                setFailedImageIds((prev) => {
-                                                    const newSet = new Set(prev);
-                                                    newSet.delete(photo.id);
-                                                    return newSet;
-                                                });
-                                            }}
-                                            onError={() => {
-                                                setFailedImageIds((prev) => new Set(prev).add(photo.id));
-                                            }}
-                                        />
-                                        {hasError && (
-                                            <View style={styles.photoErrorOverlay}>
-                                                <Feather name="image" size={32} color="#C7C7C7" />
-                                                <Text style={styles.photoErrorText}>403</Text>
-                                            </View>
-                                        )}
-                                        <TouchableOpacity
-                                            style={styles.deletePhotoButton}
-                                            onPress={(e) => {
-                                                e.stopPropagation();
-                                                handleDeletePhoto(photo.id);
-                                            }}
-                                        >
-                                            <Feather name="x" size={16} color="#fff" />
-                                        </TouchableOpacity>
+                                        <Feather name="x" size={16} color="#fff" />
                                     </TouchableOpacity>
-                                );
-                            })}
-                    </ScrollView>
+                                </TouchableOpacity>
+                            );
+                        }}
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.photoSectionContent}
+                        removeClippedSubviews={true}
+                        maxToRenderPerBatch={10}
+                        windowSize={5}
+                        initialNumToRender={5}
+                        getItemLayout={(data, index) => ({
+                            length: 106 + 8,
+                            offset: (106 + 8) * index,
+                            index,
+                        })}
+                    />
                     {/* 사진 편집 버튼 (공유) */}
                     <TouchableOpacity
                         style={styles.addButton}
@@ -1311,13 +1338,11 @@ export default function PlaceDetailScreen() {
                 </TouchableOpacity>
             </Modal>
 
-            {/* 위치 기반 이미지 피커 */}
+            {/* 이미지 피커 */}
             <LocationBasedImagePicker
                 visible={showImagePicker}
                 onClose={() => setShowImagePicker(false)}
                 onSelectPhotos={handleSelectPhotos}
-                placeLatitude={place?.latitude}
-                placeLongitude={place?.longitude}
                 placeName={place?.name || '장소'}
                 initialVisibility={selectedVisibility}
                 hideVisibilitySelector={true}
@@ -1389,7 +1414,6 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingTop: Platform.OS === 'ios' ? 56 : 24,
         paddingBottom: 8,
         backgroundColor: '#fff',
     },

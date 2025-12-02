@@ -12,6 +12,7 @@ import {
 import {Text} from 'react-native-paper';
 import {router, useLocalSearchParams} from 'expo-router';
 import {Feather} from '@expo/vector-icons';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useUser} from '../src/context/UserContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -35,6 +36,7 @@ type SearchResult = {
 const GOOGLE_MAPS_API_KEY = 'AIzaSyCoD_272LfO6ENbwlzvrnlJlvPh6ysLKSs';
 
 export default function AddPlaceScreen() {
+    const insets = useSafeAreaInsets();
     const {planId, dayNumber, destination, latitude, longitude} = useLocalSearchParams<{
         planId: string;
         dayNumber: string;
@@ -223,7 +225,7 @@ export default function AddPlaceScreen() {
     return (
         <View style={styles.container}>
             {/* 상단바 */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
                 <View style={styles.searchContainer}>
                     <TouchableOpacity onPress={handleBack} style={styles.backButton}>
                         <Feather name="arrow-left" size={24} color="#000"/>
@@ -326,7 +328,6 @@ const styles = StyleSheet.create({
     },
     header: {
         backgroundColor: '#fff',
-        paddingTop: Platform.OS === 'ios' ? 56 : 24,
         paddingBottom: 8,
         paddingHorizontal: 16,
     },

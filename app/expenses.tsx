@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Refresh
 import type { PanResponderGestureState } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUser, type Expense } from '../src/context/UserContext';
 
 type DayExpenses = {
@@ -22,6 +23,7 @@ const clamp = (value: number, min: number, max: number) => {
 export default function ExpensesScreen() {
     const params = useLocalSearchParams();
     const planId = params.planId as string;
+    const insets = useSafeAreaInsets();
 
     const { authUser, getTravelPlan, getExpensesByPlan } = useUser();
 
@@ -400,10 +402,10 @@ export default function ExpensesScreen() {
         return `${amount.toLocaleString()}${symbol}`;
     };
 
-    return (
+        return (
         <View style={styles.container}>
             {/* 상단 헤더 */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
                 <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
                     <Feather name="x" size={24} color="#000" />
                 </TouchableOpacity>
@@ -676,7 +678,6 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingTop: Platform.OS === 'ios' ? 56 : 24,
         paddingBottom: 16,
         backgroundColor: '#fff',
     },

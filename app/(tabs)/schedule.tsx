@@ -1,4 +1,4 @@
-import React, {useState, useMemo} from 'react';
+import React, { useState, useMemo } from 'react';
 import {
     View,
     StyleSheet,
@@ -9,18 +9,20 @@ import {
     RefreshControl,
     ActivityIndicator
 } from 'react-native';
-import {Text, IconButton} from 'react-native-paper';
-import {router, useFocusEffect} from 'expo-router';
-import {Feather, MaterialIcons} from '@expo/vector-icons';
-import {useUser} from '../../src/context/UserContext';
+import { Text, IconButton } from 'react-native-paper';
+import { router, useFocusEffect } from 'expo-router';
+import { Feather, MaterialIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useUser } from '../../src/context/UserContext';
 
 export default function ScheduleScreen() {
-    const {username, isAuthenticated, travelPlans, loadTravelPlans, isLoadingPlans} = useUser();
+    const insets = useSafeAreaInsets();
+    const { username, isAuthenticated, travelPlans, loadTravelPlans, isLoadingPlans } = useUser();
     const [selectedTab, setSelectedTab] = useState<'upcoming' | 'past'>('upcoming');
     const [refreshing, setRefreshing] = useState(false);
 
     // 현재 날짜 기준으로 다가오는 여행과 지난 여행 분류
-    const {upcomingTrips, pastTrips} = useMemo(() => {
+    const { upcomingTrips, pastTrips } = useMemo(() => {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
@@ -42,7 +44,7 @@ export default function ScheduleScreen() {
             return dateB.getTime() - dateA.getTime(); // 최신순
         });
 
-        return {upcomingTrips: upcoming, pastTrips: past};
+        return { upcomingTrips: upcoming, pastTrips: past };
     }, [travelPlans]);
 
     const displayedTrips = selectedTab === 'upcoming' ? upcomingTrips : pastTrips;
@@ -74,7 +76,7 @@ export default function ScheduleScreen() {
     const handleTripPress = (planId: string) => {
         router.push({
             pathname: '/plan-detail',
-            params: {planId}
+            params: { planId }
         });
     };
 
@@ -106,16 +108,16 @@ export default function ScheduleScreen() {
     return (
         <View style={styles.container}>
             {/* 상단바 */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
                 <Text style={styles.brand}>Traveline</Text>
                 <View style={styles.headerIcons}>
                     <IconButton
-                        icon={(props) => <Feather name="search" size={24} color="#000"/>}
+                        icon={(props) => <Feather name="search" size={24} color="#000" />}
                         onPress={() => router.push('/search')}
                         size={24}
                     />
                     <IconButton
-                        icon={(props) => <Feather name="bell" size={24} color="#000"/>}
+                        icon={(props) => <Feather name="bell" size={24} color="#000" />}
                         onPress={() => {
                         }}
                         size={24}
@@ -126,7 +128,7 @@ export default function ScheduleScreen() {
             {/* 여행 프레임 */}
             <View style={styles.tripFrame}>
                 <View style={styles.profileSection}>
-                    <MaterialIcons name="account-circle" size={56} color="#9E9E9E"/>
+                    <MaterialIcons name="account-circle" size={56} color="#9E9E9E" />
                     <Text style={styles.teamName}>{username}</Text>
                 </View>
 
@@ -139,7 +141,7 @@ export default function ScheduleScreen() {
                         <Text style={[styles.tabText, selectedTab === 'upcoming' && styles.tabTextActive]}>
                             다가오는 여행
                         </Text>
-                        {selectedTab === 'upcoming' && <View style={styles.tabUnderline}/>}
+                        {selectedTab === 'upcoming' && <View style={styles.tabUnderline} />}
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={[styles.tab, selectedTab === 'past' && styles.tabActive]}
@@ -148,14 +150,14 @@ export default function ScheduleScreen() {
                         <Text style={[styles.tabText, selectedTab === 'past' && styles.tabTextActive]}>
                             지난 여행
                         </Text>
-                        {selectedTab === 'past' && <View style={styles.tabUnderline}/>}
+                        {selectedTab === 'past' && <View style={styles.tabUnderline} />}
                     </TouchableOpacity>
                 </View>
             </View>
 
             {/* 새 일정 추가 버튼 */}
             <TouchableOpacity style={styles.addButton} onPress={handleNewSchedule}>
-                <Feather name="plus-circle" size={16} color="#000"/>
+                <Feather name="plus-circle" size={16} color="#000" />
                 <Text style={styles.addButtonText}>새 일정 추가</Text>
             </TouchableOpacity>
 
@@ -174,7 +176,7 @@ export default function ScheduleScreen() {
             >
                 {isLoadingPlans && !refreshing ? (
                     <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color="#088CDA"/>
+                        <ActivityIndicator size="large" color="#088CDA" />
                         <Text style={styles.loadingText}>여행 계획을 불러오는 중...</Text>
                     </View>
                 ) : !isAuthenticated ? (
@@ -197,7 +199,7 @@ export default function ScheduleScreen() {
                             onPress={() => handleTripPress(trip.id)}
                         >
                             <View style={styles.tripContent}>
-                                <MaterialIcons name="date-range" size={24} color="#000"/>
+                                <MaterialIcons name="date-range" size={24} color="#000" />
                                 <View style={styles.tripInfo}>
                                     <Text style={styles.tripTitle}>{trip.title}</Text>
                                     <Text style={styles.tripDate}>
@@ -206,7 +208,7 @@ export default function ScheduleScreen() {
                                 </View>
                             </View>
                             <TouchableOpacity style={styles.moreButton}>
-                                <Feather name="more-horizontal" size={24} color="#000"/>
+                                <Feather name="more-horizontal" size={24} color="#000" />
                             </TouchableOpacity>
                         </TouchableOpacity>
                     ))
@@ -223,7 +225,6 @@ const styles = StyleSheet.create({
     },
     header: {
         backgroundColor: '#fff',
-        paddingTop: 24,
         paddingBottom: 8,
         paddingHorizontal: 22,
         flexDirection: 'row',

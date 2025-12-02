@@ -17,6 +17,7 @@ import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import Constants from 'expo-constants';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUser } from '../src/context/UserContext';
 import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -147,6 +148,7 @@ const GOOGLE_MAPS_API_KEY = Platform.select({
 
 export default function PlanDetailScreen() {
     const { planId } = useLocalSearchParams<{ planId: string }>();
+    const insets = useSafeAreaInsets();
     const { getTravelPlan, reorderPlaces, getPlacesByDay, getExpensesByPlace, getFlightsByPlan, getAccommodationsByPlan, loadTravelPlans } = useUser();
     const [selectedDay, setSelectedDay] = useState(1);
     const [isEditMode, setIsEditMode] = useState(false);
@@ -1076,7 +1078,7 @@ export default function PlanDetailScreen() {
     return (
         <GestureHandlerRootView style={styles.container}>
             {/* 상단 헤더 */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
                 <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
                     <Feather name="x" size={24} color="#000" />
                 </TouchableOpacity>
@@ -1160,8 +1162,8 @@ export default function PlanDetailScreen() {
                     provider={PROVIDER_GOOGLE}
                     style={styles.map}
                     initialRegion={initialRegion}
-                    showsUserLocation={true}
-                    showsMyLocationButton={true}
+                    showsUserLocation={false}
+                    showsMyLocationButton={false}
                 >
                     {/* 장소들 사이의 실제 경로선 */}
                     {routeCoordinates.length > 0 && (
@@ -1433,7 +1435,6 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingTop: 24,
         paddingBottom: 8,
         backgroundColor: '#F6F6F6',
     },

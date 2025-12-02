@@ -2,11 +2,13 @@ import React from 'react';
 import { View, StyleSheet, TouchableOpacity, Text } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ChatRoom from '../components/ChatRoom';
 import { useUser } from '../src/context/UserContext';
 
 export default function ChatScreen() {
     const { planId } = useLocalSearchParams<{ planId: string }>();
+    const insets = useSafeAreaInsets();
     const { authUser, getTravelPlan } = useUser();
 
     const travelPlan = planId ? getTravelPlan(planId) : undefined;
@@ -16,7 +18,7 @@ export default function ChatScreen() {
     if (!planId) {
         return (
             <View style={styles.container}>
-                <View style={styles.header}>
+                <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
                     <TouchableOpacity onPress={() => router.back()} style={styles.closeButton}>
                         <Feather name="x" size={24} color="#000" />
                     </TouchableOpacity>
@@ -30,7 +32,7 @@ export default function ChatScreen() {
 
     return (
         <View style={styles.container}>
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.closeButton}>
                     <Feather name="x" size={24} color="#000" />
                 </TouchableOpacity>
@@ -59,7 +61,6 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingTop: 24,
         paddingBottom: 12,
         backgroundColor: '#fff',
     },

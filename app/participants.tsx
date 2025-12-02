@@ -12,6 +12,7 @@ import {
 import { Text } from 'react-native-paper';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { useUser } from '../src/context/UserContext';
 import type { Member } from '../src/types/member.types';
@@ -20,6 +21,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function ParticipantsScreen() {
     const { planId } = useLocalSearchParams<{ planId: string }>();
+    const insets = useSafeAreaInsets();
     const { getMembersByPlan, authUser } = useUser();
     const [members, setMembers] = useState<Member[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -70,7 +72,7 @@ export default function ParticipantsScreen() {
     return (
         <View style={styles.container}>
             {/* Header */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
                     <MaterialIcons name="arrow-back" size={24} color="#000" />
                 </TouchableOpacity>
@@ -150,7 +152,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingTop: Platform.OS === 'ios' ? 56 : 24,
         paddingBottom: 8,
         backgroundColor: 'rgba(255, 255, 255, 0.88)',
     },
