@@ -15,6 +15,7 @@ module.exports = {
       resizeMode: "contain",
       backgroundColor: "#ffffff"
     },
+    scheme: "traveline",
     plugins: [
       [
         "expo-media-library",

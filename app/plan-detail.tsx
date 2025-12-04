@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, {useState, useMemo, useRef, useEffect, useCallback} from 'react';
 import {
     View,
     StyleSheet,
@@ -12,20 +12,20 @@ import {
     Modal,
     Pressable,
 } from 'react-native';
-import { Text } from 'react-native-paper';
-import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
-import { Feather, MaterialIcons } from '@expo/vector-icons';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import {Text} from 'react-native-paper';
+import {router, useLocalSearchParams, useFocusEffect} from 'expo-router';
+import {Feather, MaterialIcons} from '@expo/vector-icons';
+import MapView, {Marker, Polyline, PROVIDER_GOOGLE} from 'react-native-maps';
 import Constants from 'expo-constants';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useUser } from '../src/context/UserContext';
-import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import type { Place, Flight, Accommodation } from '../src/context/UserContext';
-import { useTravelPlanWebSocket } from '../src/hooks/useTravelPlanWebSocket';
-import type { TravelPlanEvent } from '../src/types/webSocket.types';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import {useUser} from '../src/context/UserContext';
+import DraggableFlatList, {ScaleDecorator, RenderItemParams} from 'react-native-draggable-flatlist';
+import {GestureHandlerRootView} from 'react-native-gesture-handler';
+import type {Place, Flight, Accommodation} from '../src/context/UserContext';
+import {useTravelPlanWebSocket} from '../src/hooks/useTravelPlanWebSocket';
+import type {TravelPlanEvent} from '../src/types/webSocket.types';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get('window');
 
 const MIN_MAP_HEIGHT = 0;
 const MAX_MAP_HEIGHT = 200;
@@ -147,9 +147,17 @@ const GOOGLE_MAPS_API_KEY = Platform.select({
 }) || 'AIzaSyCoD_272LfO6ENbwlzvrnlJlvPh6ysLKSs'; // Fallback
 
 export default function PlanDetailScreen() {
-    const { planId } = useLocalSearchParams<{ planId: string }>();
+    const {planId} = useLocalSearchParams<{ planId: string }>();
     const insets = useSafeAreaInsets();
-    const { getTravelPlan, reorderPlaces, getPlacesByDay, getExpensesByPlace, getFlightsByPlan, getAccommodationsByPlan, loadTravelPlans } = useUser();
+    const {
+        getTravelPlan,
+        reorderPlaces,
+        getPlacesByDay,
+        getExpensesByPlace,
+        getFlightsByPlan,
+        getAccommodationsByPlan,
+        loadTravelPlans
+    } = useUser();
     const [selectedDay, setSelectedDay] = useState(1);
     const [isEditMode, setIsEditMode] = useState(false);
     const [isLoadingPlaces, setIsLoadingPlaces] = useState(false);
@@ -232,7 +240,7 @@ export default function PlanDetailScreen() {
         // planId가 없으면 현재 planId 사용 (WebSocket은 특정 planId에 연결되므로)
         const eventPlanId = typeof event.planId === 'number' ? event.planId.toString() : (event.planId || planId);
         if (!planId || !eventPlanId || eventPlanId !== planId) {
-            console.log('WebSocket event ignored - planId mismatch:', { eventPlanId, currentPlanId: planId });
+            console.log('WebSocket event ignored - planId mismatch:', {eventPlanId, currentPlanId: planId});
             return;
         }
 
@@ -538,11 +546,11 @@ export default function PlanDetailScreen() {
             <View style={styles.container}>
                 <View style={styles.header}>
                     <TouchableOpacity onPress={() => router.back()} style={styles.closeButton}>
-                        <Feather name="x" size={24} color="#000" />
+                        <Feather name="x" size={24} color="#000"/>
                     </TouchableOpacity>
                 </View>
-                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                    <Text style={{ fontSize: 16, color: '#9E9E9E' }}>여행 계획을 찾을 수 없습니다</Text>
+                <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
+                    <Text style={{fontSize: 16, color: '#9E9E9E'}}>여행 계획을 찾을 수 없습니다</Text>
                 </View>
             </View>
         );
@@ -754,7 +762,7 @@ export default function PlanDetailScreen() {
                 // 약간의 딜레이를 주어 지도가 렌더링된 후 실행
                 setTimeout(() => {
                     mapRef.current?.fitToCoordinates(coordinates, {
-                        edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+                        edgePadding: {top: 50, right: 50, bottom: 50, left: 50},
                         animated: true,
                     });
                 }, 500);
@@ -768,15 +776,15 @@ export default function PlanDetailScreen() {
     }, [markers, initialRegion]);
 
     const handleClose = () => {
-        // 모든 모달을 닫고 홈 화면으로 이동
-        router.dismissAll();
+        // 이전 화면으로 돌아가기
+        router.back();
     };
 
     const handleAddPlace = () => {
         // 목적지 좌표 정보 전달 (City 정보에서 가져오기)
         const destinationCoords = tripData.destinationCity?.latitude && tripData.destinationCity?.longitude
-            ? { latitude: tripData.destinationCity.latitude, longitude: tripData.destinationCity.longitude }
-            : { latitude: 37.5665, longitude: 126.9780 }; // Fallback: 서울
+            ? {latitude: tripData.destinationCity.latitude, longitude: tripData.destinationCity.longitude}
+            : {latitude: 37.5665, longitude: 126.9780}; // Fallback: 서울
 
         router.push({
             pathname: '/add-place',
@@ -818,7 +826,7 @@ export default function PlanDetailScreen() {
     };
 
     // 장소 카드 렌더링 함수
-    const renderPlaceItem = ({ item: place, getIndex, drag, isActive }: RenderItemParams<Place>) => {
+    const renderPlaceItem = ({item: place, getIndex, drag, isActive}: RenderItemParams<Place>) => {
         const currentPlaces = placesToDisplay;
         if (!currentPlaces || currentPlaces.length === 0) return null;
 
@@ -842,11 +850,11 @@ export default function PlanDetailScreen() {
                             styles.connectionLineContainer,
                             index === currentPlaces.length - 1 && styles.lastConnectionLine
                         ]}>
-                            <View style={styles.connectionLine} />
+                            <View style={styles.connectionLine}/>
                             {/* 거리 표시 (마지막 항목은 투명) */}
                             <View style={[
                                 styles.distanceBadge,
-                                index === currentPlaces.length - 1 && { opacity: 0 }
+                                index === currentPlaces.length - 1 && {opacity: 0}
                             ]}>
                                 <Text style={styles.distanceText}>
                                     {(() => {
@@ -911,7 +919,7 @@ export default function PlanDetailScreen() {
                             {/* 하단 정보 (좋아요, 지출) */}
                             <View style={styles.placeBottomInfo}>
                                 <View style={styles.placeLikeSection}>
-                                    <Feather name="heart" size={12} color="#000" />
+                                    <Feather name="heart" size={12} color="#000"/>
                                     <Text style={styles.placeLikeText}>좋아요</Text>
                                     <Text style={styles.placeLikeCount}>0</Text>
                                 </View>
@@ -1040,10 +1048,10 @@ export default function PlanDetailScreen() {
             <View style={styles.placeCardContainer}>
                 <View style={styles.placeLeftSection}>
                     <View style={[styles.placeNumber, styles.flightPlaceNumber]}>
-                        <MaterialIcons name="flight" size={14} color="#fff" />
+                        <MaterialIcons name="flight" size={14} color="#fff"/>
                     </View>
                     <View style={connectionLineStyles}>
-                        <View style={styles.connectionLine} />
+                        <View style={styles.connectionLine}/>
                         <View style={[styles.distanceBadge, styles.hiddenDistanceBadge]}>
                             <Text style={styles.distanceText}>{' '}</Text>
                         </View>
@@ -1062,7 +1070,7 @@ export default function PlanDetailScreen() {
                         </View>
                         <View style={styles.placeBottomInfo}>
                             <View style={styles.placeLikeSection}>
-                                <MaterialIcons name="flight" size={12} color="#088CDA" />
+                                <MaterialIcons name="flight" size={12} color="#088CDA"/>
                                 <Text style={[styles.placeLikeText, styles.flightLabelText]}>{cardLabel}</Text>
                             </View>
                             <Text style={[styles.placeExpense, styles.flightScheduleMeta]}>
@@ -1078,15 +1086,15 @@ export default function PlanDetailScreen() {
     return (
         <GestureHandlerRootView style={styles.container}>
             {/* 상단 헤더 */}
-            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+            <View style={[styles.header, {paddingTop: insets.top + 16}]}>
                 <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
-                    <Feather name="x" size={24} color="#000" />
+                    <Feather name="x" size={24} color="#000"/>
                 </TouchableOpacity>
                 <TouchableOpacity
                     style={styles.moreButton}
                     onPress={() => setShowSidePanel(true)}
                 >
-                    <Feather name="more-horizontal" size={24} color="#000" />
+                    <Feather name="more-horizontal" size={24} color="#000"/>
                 </TouchableOpacity>
             </View>
 
@@ -1112,7 +1120,7 @@ export default function PlanDetailScreen() {
                         {selectedFlights.length === 0 ? (
                             <>
                                 <View style={styles.iconCircle}>
-                                    <Feather name="plus" size={10} color="#C7C7C7" />
+                                    <Feather name="plus" size={10} color="#C7C7C7"/>
                                 </View>
                                 <Text style={styles.quickActionText}>항공편</Text>
                             </>
@@ -1130,7 +1138,7 @@ export default function PlanDetailScreen() {
                         {selectedAccommodations.length === 0 ? (
                             <>
                                 <View style={styles.iconCircle}>
-                                    <Feather name="plus" size={10} color="#C7C7C7" />
+                                    <Feather name="plus" size={10} color="#C7C7C7"/>
                                 </View>
                                 <Text style={styles.quickActionText}>숙소</Text>
                             </>
@@ -1143,10 +1151,10 @@ export default function PlanDetailScreen() {
                 <View style={styles.participantsRow}>
                     <View style={styles.participantAvatars}>
                         <View style={styles.avatar}>
-                            <MaterialIcons name="account-circle" size={32} color="#9E9E9E" />
+                            <MaterialIcons name="account-circle" size={32} color="#9E9E9E"/>
                         </View>
                         <View style={styles.moreAvatar}>
-                            <Feather name="more-horizontal" size={12} color="#fff" />
+                            <Feather name="more-horizontal" size={12} color="#fff"/>
                         </View>
                     </View>
                     <View style={styles.participantBadge}>
@@ -1156,7 +1164,7 @@ export default function PlanDetailScreen() {
             </View>
 
             {/* 지도 영역 */}
-            <Animated.View style={[styles.mapSection, { height: mapHeight }]}>
+            <Animated.View style={[styles.mapSection, {height: mapHeight}]}>
                 <MapView
                     ref={mapRef}
                     provider={PROVIDER_GOOGLE}
@@ -1206,7 +1214,7 @@ export default function PlanDetailScreen() {
             <Animated.View style={styles.scheduleSection}>
                 {/* 핸들 */}
                 <View style={styles.handleTouchArea} {...panResponder.panHandlers}>
-                    <View style={styles.handle} />
+                    <View style={styles.handle}/>
                 </View>
 
                 {/* 일차 탭 */}
@@ -1274,7 +1282,7 @@ export default function PlanDetailScreen() {
                 {/* 편집 모드 안내 */}
                 {isEditMode && currentDayData && currentDayData.places.length > 0 && (
                     <View style={styles.editModeHint}>
-                        <MaterialIcons name="info-outline" size={16} color="#088CDA" />
+                        <MaterialIcons name="info-outline" size={16} color="#088CDA"/>
                         <Text style={styles.editModeHintText}>
                             리오더 아이콘(≡)을 길게 눌러 드래그하여 순서를 변경하세요
                         </Text>
@@ -1287,7 +1295,7 @@ export default function PlanDetailScreen() {
                         data={placesToDisplay}
                         renderItem={renderPlaceItem}
                         keyExtractor={(item) => item.id}
-                        onDragEnd={({ data, from, to }) => {
+                        onDragEnd={({data, from, to}) => {
                             if (from !== to) {
                                 if (isEditMode) {
                                     // 편집 모드: 로컬 상태만 업데이트
@@ -1328,7 +1336,7 @@ export default function PlanDetailScreen() {
                                 ))}
                                 <View style={styles.addPlaceButtonContainer}>
                                     <TouchableOpacity style={styles.addPlaceButton} onPress={handleAddPlace}>
-                                        <Feather name="plus" size={12} color="#fff" />
+                                        <Feather name="plus" size={12} color="#fff"/>
                                         <Text style={styles.addPlaceText}>장소 추가</Text>
                                     </TouchableOpacity>
                                 </View>
@@ -1341,28 +1349,28 @@ export default function PlanDetailScreen() {
             {/* 하단 네비게이션 바 */}
             <View style={styles.bottomNav}>
                 <TouchableOpacity style={styles.navItem}>
-                    <MaterialIcons name="calendar-today" size={30} color="#088CDA" />
+                    <MaterialIcons name="calendar-today" size={30} color="#088CDA"/>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.navItem} onPress={handleChecklistPress}>
-                    <MaterialIcons name="card-travel" size={32} color="#9E9E9E" />
+                    <MaterialIcons name="card-travel" size={32} color="#9E9E9E"/>
                 </TouchableOpacity>
                 <TouchableOpacity
                     style={styles.navItem}
                     onPress={() => router.push({
                         pathname: '/expenses',
-                        params: { planId: planId || '' }
+                        params: {planId: planId || ''}
                     })}
                 >
-                    <MaterialIcons name="receipt" size={32} color="#9E9E9E" />
+                    <MaterialIcons name="receipt" size={32} color="#9E9E9E"/>
                 </TouchableOpacity>
                 <TouchableOpacity
                     style={styles.navItem}
                     onPress={() => router.push({
                         pathname: '/chat',
-                        params: { planId: planId || '' }
+                        params: {planId: planId || ''}
                     })}
                 >
-                    <MaterialIcons name="chat" size={32} color="#9E9E9E" />
+                    <MaterialIcons name="chat" size={32} color="#9E9E9E"/>
                 </TouchableOpacity>
             </View>
 
@@ -1387,7 +1395,7 @@ export default function PlanDetailScreen() {
                                 onPress={() => setShowSidePanel(false)}
                                 style={styles.sidePanelCloseButton}
                             >
-                                <Feather name="x" size={24} color="#000" />
+                                <Feather name="x" size={24} color="#000"/>
                             </TouchableOpacity>
                         </View>
 
@@ -1399,11 +1407,11 @@ export default function PlanDetailScreen() {
                                     setShowSidePanel(false);
                                     router.push({
                                         pathname: '/participants',
-                                        params: { planId: planId || '' },
+                                        params: {planId: planId || ''},
                                     });
                                 }}
                             >
-                                <Feather name="user-plus" size={16} color="#000" />
+                                <Feather name="user-plus" size={16} color="#000"/>
                                 <Text style={styles.sidePanelMenuItemText}>참여자 편집하기</Text>
                             </TouchableOpacity>
 
@@ -1414,7 +1422,7 @@ export default function PlanDetailScreen() {
                                     // TODO: Implement travel journal creation
                                 }}
                             >
-                                <Feather name="book" size={16} color="#000" />
+                                <Feather name="book" size={16} color="#000"/>
                                 <Text style={styles.sidePanelMenuItemText}>여행기 생성하기</Text>
                             </TouchableOpacity>
                         </View>
@@ -1626,7 +1634,7 @@ const styles = StyleSheet.create({
         paddingBottom: 16,
     },
     addPlaceButtonContainer: {
-        paddingHorizontal: 21,
+        paddingHorizontal: 0,
         paddingBottom: 24,
         backgroundColor: '#fff',
     },

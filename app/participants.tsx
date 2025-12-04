@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, {useState, useEffect, useCallback} from 'react';
 import {
     View,
     StyleSheet,
@@ -8,24 +8,29 @@ import {
     Dimensions,
     Modal,
     Pressable,
+    Alert,
+    ActivityIndicator,
 } from 'react-native';
-import { Text } from 'react-native-paper';
-import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
-import { Feather, MaterialIcons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {Text} from 'react-native-paper';
+import {router, useLocalSearchParams, useFocusEffect} from 'expo-router';
+import {Feather, MaterialIcons} from '@expo/vector-icons';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
-import { useUser } from '../src/context/UserContext';
-import type { Member } from '../src/types/member.types';
+import {useUser} from '../src/context/UserContext';
+import {travelPlanApi} from '../src/utils/travelPlanApi';
+import type {Member} from '../src/types/member.types';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const {width: SCREEN_WIDTH} = Dimensions.get('window');
 
 export default function ParticipantsScreen() {
-    const { planId } = useLocalSearchParams<{ planId: string }>();
+    const {planId} = useLocalSearchParams<{ planId: string }>();
     const insets = useSafeAreaInsets();
-    const { getMembersByPlan, authUser } = useUser();
+    const {getMembersByPlan, authUser} = useUser();
     const [members, setMembers] = useState<Member[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [showToast, setShowToast] = useState(false);
+    const [inviteCode, setInviteCode] = useState<string | null>(null);
+    const [isGeneratingCode, setIsGeneratingCode] = useState(false);
 
     const loadMembers = useCallback(async () => {
         if (!planId) return;
@@ -41,27 +46,55 @@ export default function ParticipantsScreen() {
         }
     }, [planId, getMembersByPlan]);
 
+    const loadInviteCode = useCallback(async () => {
+        if (!planId) return;
+
+        try {
+            const inviteCodeData = await travelPlanApi.getInviteCode(parseInt(planId));
+            if (inviteCodeData?.code) {
+                setInviteCode(inviteCodeData.code);
+            }
+        } catch (error) {
+            console.error('Failed to load invite code:', error);
+            // 에러 발생 시 무시 (코드가 없을 수도 있음)
+        }
+    }, [planId]);
+
     useFocusEffect(
         useCallback(() => {
             loadMembers();
-        }, [loadMembers])
+            loadInviteCode();
+        }, [loadMembers, loadInviteCode])
     );
 
-    const handleCopyInviteLink = async () => {
+    const handleGenerateInviteCode = async () => {
+        if (!planId) return;
+
         try {
-            // TODO: Replace with actual invite link from API
-            // For now, generate a simple shareable link
-            const inviteLink = `traveline://invite/${planId}`;
+            setIsGeneratingCode(true);
+            // API를 통해 초대 코드 생성
+            const {code} = await travelPlanApi.generateInviteCode(parseInt(planId));
+            setInviteCode(code);
+        } catch (error: any) {
+            console.error('Failed to generate invite code:', error);
+            Alert.alert('오류', error.message || '초대 코드 생성에 실패했습니다.');
+        } finally {
+            setIsGeneratingCode(false);
+        }
+    };
 
-            await Clipboard.setStringAsync(inviteLink);
+    const handleCopyCode = async () => {
+        if (!inviteCode) return;
 
-            // Show toast
+        try {
+            await Clipboard.setStringAsync(inviteCode);
             setShowToast(true);
             setTimeout(() => {
                 setShowToast(false);
             }, 2000);
         } catch (error) {
-            console.error('Failed to copy invite link:', error);
+            console.error('Failed to copy code:', error);
+            Alert.alert('오류', '코드 복사에 실패했습니다.');
         }
     };
 
@@ -72,9 +105,9 @@ export default function ParticipantsScreen() {
     return (
         <View style={styles.container}>
             {/* Header */}
-            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+            <View style={[styles.header, {paddingTop: insets.top + 16}]}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                    <MaterialIcons name="arrow-back" size={24} color="#000" />
+                    <MaterialIcons name="arrow-back" size={24} color="#000"/>
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>참여자 {members.length}</Text>
             </View>
@@ -100,12 +133,12 @@ export default function ParticipantsScreen() {
                                     />
                                     {isOwnerMember && (
                                         <View style={styles.ownerBadge}>
-                                            <MaterialIcons name="star" size={16} color="#088CDA" />
+                                            <MaterialIcons name="star" size={16} color="#088CDA"/>
                                         </View>
                                     )}
                                 </View>
                                 <Text style={styles.memberName}>
-                                    {member.name || member.username}
+                                    {member.username}
                                     <Text style={styles.memberNameSuffix}>님</Text>
                                 </Text>
                             </View>
@@ -114,15 +147,41 @@ export default function ParticipantsScreen() {
                 )}
             </ScrollView>
 
-            {/* Copy Invite Link Button */}
+            {/* Invite Code Section */}
             <View style={styles.bottomSection}>
-                <TouchableOpacity
-                    style={styles.copyButton}
-                    onPress={handleCopyInviteLink}
-                >
-                    <MaterialIcons name="insert-link" size={24} color="#fff" />
-                    <Text style={styles.copyButtonText}>초대 링크 복사</Text>
-                </TouchableOpacity>
+                {inviteCode ? (
+                    <View style={styles.codeContainer}>
+                        <View style={styles.codeDisplay}>
+                            <Text style={styles.codeLabel}>초대 코드</Text>
+                            <Text style={styles.codeText}>{inviteCode}</Text>
+                        </View>
+                        <TouchableOpacity
+                            style={styles.copyCodeButton}
+                            onPress={handleCopyCode}
+                        >
+                            <MaterialIcons name="content-copy" size={20} color="#088CDA"/>
+                            <Text style={styles.copyCodeButtonText}>복사</Text>
+                        </TouchableOpacity>
+                    </View>
+                ) : (
+                    <TouchableOpacity
+                        style={[styles.generateButton, isGeneratingCode && styles.buttonDisabled]}
+                        onPress={handleGenerateInviteCode}
+                        disabled={isGeneratingCode}
+                    >
+                        {isGeneratingCode ? (
+                            <>
+                                <ActivityIndicator size="small" color="#fff"/>
+                                <Text style={styles.generateButtonText}>코드 생성 중...</Text>
+                            </>
+                        ) : (
+                            <>
+                                <MaterialIcons name="vpn-key" size={24} color="#fff"/>
+                                <Text style={styles.generateButtonText}>초대 코드 확인하기</Text>
+                            </>
+                        )}
+                    </TouchableOpacity>
+                )}
             </View>
 
             {/* Toast Notification */}
@@ -134,8 +193,8 @@ export default function ParticipantsScreen() {
             >
                 <Pressable style={styles.toastOverlay} onPress={() => setShowToast(false)}>
                     <View style={styles.toastContainer}>
-                        <MaterialIcons name="check-circle-outline" size={16} color="#fff" />
-                        <Text style={styles.toastText}>초대 링크가 복사되었습니다.</Text>
+                        <MaterialIcons name="check-circle-outline" size={16} color="#fff"/>
+                        <Text style={styles.toastText}>초대 코드가 복사되었습니다.</Text>
                     </View>
                 </Pressable>
             </Modal>
@@ -227,7 +286,7 @@ const styles = StyleSheet.create({
         paddingTop: 8,
         paddingBottom: Platform.OS === 'ios' ? 34 : 12,
     },
-    copyButton: {
+    generateButton: {
         backgroundColor: '#088CDA',
         borderRadius: 8,
         flexDirection: 'row',
@@ -238,12 +297,54 @@ const styles = StyleSheet.create({
         paddingHorizontal: 57,
         height: 40,
     },
-    copyButtonText: {
+    buttonDisabled: {
+        opacity: 0.6,
+    },
+    generateButtonText: {
         fontSize: 16,
         fontWeight: '600',
         lineHeight: 16,
         letterSpacing: -0.2,
         color: '#fff',
+    },
+    codeContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    codeDisplay: {
+        flex: 1,
+        backgroundColor: '#F5F5F5',
+        borderRadius: 8,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+    },
+    codeLabel: {
+        fontSize: 12,
+        fontWeight: '500',
+        color: '#9E9E9E',
+        marginBottom: 4,
+    },
+    codeText: {
+        fontSize: 24,
+        fontWeight: '700',
+        letterSpacing: 4,
+        color: '#000',
+        fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    },
+    copyCodeButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        backgroundColor: '#E3F2FD',
+        borderRadius: 8,
+    },
+    copyCodeButtonText: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#088CDA',
     },
     toastOverlay: {
         flex: 1,

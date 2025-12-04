@@ -3,8 +3,8 @@ import { getApiBaseUrl } from './apiConfig';
 
 const API_BASE_URL = getApiBaseUrl();
 
-// JWT 토큰 만료 임박 기간 (7일)
-const TOKEN_REFRESH_THRESHOLD = 7 * 24 * 60 * 60 * 1000; // 7일을 밀리초로
+// JWT 토큰 만료 임박 기간 (Access Token은 1시간 만료이므로 5분 전에 리프레시)
+const TOKEN_REFRESH_THRESHOLD = 5 * 60 * 1000; // 5분을 밀리초로
 
 // JWT 디코딩 함수
 const decodeJWT = (token: string): any => {
@@ -49,7 +49,7 @@ const isTokenExpired = (token: string): boolean => {
     }
 };
 
-// JWT 토큰 만료 임박 체크 함수 (7일 이내 만료)
+// JWT 토큰 만료 임박 체크 함수 (5분 이내 만료)
 const isTokenExpiringSoon = (token: string): boolean => {
     try {
         const decoded = decodeJWT(token);
@@ -100,6 +100,12 @@ export interface RefreshTokenRequest {
 class AuthApi {
     private accessToken: string | null = null;
     private refreshToken: string | null = null;
+    private onTokenExpiredCallback: (() => void) | null = null;
+
+    // 토큰 만료 콜백 등록
+    setOnTokenExpired(callback: (() => void) | null) {
+        this.onTokenExpiredCallback = callback;
+    }
 
     // 토큰 초기화 (앱 시작시 호출)
     async initializeTokens() {
@@ -131,7 +137,7 @@ class AuthApi {
                 }
             }
 
-            // 토큰이 곧 만료될 예정인지 체크 (7일 이내)
+            // 토큰이 곧 만료될 예정인지 체크 (5분 이내)
             if (isTokenExpiringSoon(this.accessToken)) {
                 // 백그라운드에서 갱신 (실패해도 현재 토큰은 유효하므로 true 반환)
                 try {
@@ -319,6 +325,15 @@ class AuthApi {
             throw new Error('No access token available');
         }
 
+        // 요청 전에 토큰 만료 체크 및 갱신
+        const isTokenValid = await this.checkAndRefreshToken();
+        if (!isTokenValid) {
+            await this.clearTokens();
+            // 토큰 만료 콜백 호출
+            this.onTokenExpiredCallback?.();
+            throw new Error('Token expired and refresh failed');
+        }
+
         const headers: Record<string, string> = {
             ...options.headers as Record<string, string>,
             'Authorization': `Bearer ${this.accessToken}`,
@@ -331,7 +346,7 @@ class AuthApi {
 
         let response = await fetch(url, { ...options, headers });
 
-        // 토큰이 만료되었으면 갱신 후 재시도
+        // 토큰이 만료되었으면 갱신 후 재시도 (추가 안전장치)
         if (response.status === 401) {
             try {
                 await this.refreshAccessToken();
@@ -339,6 +354,8 @@ class AuthApi {
                 response = await fetch(url, { ...options, headers });
             } catch (error) {
                 await this.clearTokens();
+                // 토큰 만료 콜백 호출
+                this.onTokenExpiredCallback?.();
                 throw error;
             }
         }

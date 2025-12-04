@@ -65,6 +65,7 @@ type UserContextValue = {
     addTravelPlan: (plan: Omit<TravelPlan, 'id'>) => Promise<string>;
     getTravelPlan: (id: string) => TravelPlan | undefined;
     updateTravelPlan: (id: string, plan: Partial<TravelPlan>) => Promise<void>;
+    deleteTravelPlan: (id: string) => Promise<void>;
     // Place methods
     addPlaceToDay: (planId: string, dayNumber: number, place: Omit<Place, 'id'>) => Promise<void>;
     getPlacesByDay: (planId: string, dayNumber: number) => Promise<Place[]>;
@@ -182,7 +183,8 @@ export const UserProvider = ({children}: PropsWithChildren) => {
         loadTravelPlans,
         addTravelPlan,
         getTravelPlan,
-        updateTravelPlan
+        updateTravelPlan,
+        deleteTravelPlan
     } = travelPlanHook;
 
     // Place 관련 훅
@@ -253,6 +255,7 @@ export const UserProvider = ({children}: PropsWithChildren) => {
         addTravelPlan,
         getTravelPlan,
         updateTravelPlan,
+        deleteTravelPlan,
         addPlaceToDay,
         getPlacesByDay,
         deletePlaceFromDay,
