@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, {useState} from 'react';
 import {
     View,
     StyleSheet,
@@ -9,9 +9,10 @@ import {
     ActivityIndicator,
     Alert,
 } from 'react-native';
-import { Text } from 'react-native-paper';
-import { router, useLocalSearchParams } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
+import {Text} from 'react-native-paper';
+import {router, useLocalSearchParams} from 'expo-router';
+import {Feather} from '@expo/vector-icons';
+import Constants from 'expo-constants';
 
 type SearchResult = {
     name: string;
@@ -21,10 +22,13 @@ type SearchResult = {
     longitude?: number;
 };
 
-const GOOGLE_MAPS_API_KEY = 'AIzaSyCoD_272LfO6ENbwlzvrnlJlvPh6ysLKSs';
+const GOOGLE_MAPS_API_KEY = Platform.select({
+    ios: Constants.expoConfig?.ios?.config?.googleMapsApiKey,
+    android: Constants.expoConfig?.android?.config?.googleMaps?.apiKey,
+}) || '';
 
 export default function SearchAccommodationScreen() {
-    const { planId } = useLocalSearchParams<{ planId: string }>();
+    const {planId} = useLocalSearchParams<{ planId: string }>();
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -36,7 +40,7 @@ export default function SearchAccommodationScreen() {
     const handleDirectAdd = () => {
         router.push({
             pathname: '/add-accommodation',
-            params: { planId },
+            params: {planId},
         });
     };
 
@@ -111,7 +115,7 @@ export default function SearchAccommodationScreen() {
             <View style={styles.header}>
                 <View style={styles.searchContainer}>
                     <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-                        <Feather name="arrow-left" size={24} color="#000" />
+                        <Feather name="arrow-left" size={24} color="#000"/>
                     </TouchableOpacity>
                     <View style={styles.searchBar}>
                         <TextInput
@@ -125,7 +129,7 @@ export default function SearchAccommodationScreen() {
                             autoFocus
                         />
                         <TouchableOpacity onPress={handleSearchSubmit}>
-                            <Feather name="search" size={16} color="#585858" />
+                            <Feather name="search" size={16} color="#585858"/>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -140,7 +144,7 @@ export default function SearchAccommodationScreen() {
                 {/* 로딩 표시 */}
                 {isLoading && (
                     <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color="#088CDA" />
+                        <ActivityIndicator size="large" color="#088CDA"/>
                     </View>
                 )}
 

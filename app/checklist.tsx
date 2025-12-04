@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Modal, Pressable, TextInput, Alert as RNAlert, RefreshControl } from 'react-native';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUser, type Supply, type Task } from '../src/context/UserContext';
 
 interface ChecklistItem {
@@ -13,6 +14,7 @@ interface ChecklistItem {
 export default function ChecklistScreen() {
     const params = useLocalSearchParams();
     const planId = params.planId as string;
+    const insets = useSafeAreaInsets();
 
     const { getSuppliesByPlan, createSupply, updateSupply, deleteSupply, getTasksByPlan, createTask, updateTask, deleteTask } = useUser();
 
@@ -170,7 +172,7 @@ export default function ChecklistScreen() {
     return (
         <View style={styles.container}>
             {/* 상단 헤더 */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
                 <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
                     <Feather name="x" size={24} color="#000" />
                 </TouchableOpacity>
@@ -299,22 +301,6 @@ export default function ChecklistScreen() {
                     </View>
                 </View>
             </Modal>
-
-            {/* 하단 네비게이션 바 */}
-            <View style={styles.bottomNav}>
-                <TouchableOpacity style={styles.navItem} onPress={handlePlanDetailPress}>
-                    <MaterialIcons name="calendar-today" size={30} color="#9E9E9E" />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.navItem}>
-                    <MaterialIcons name="card-travel" size={32} color="#088CDA" />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.navItem} onPress={handleExpensesPress}>
-                    <MaterialIcons name="receipt" size={32} color="#9E9E9E" />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.navItem}>
-                    <MaterialIcons name="chat" size={32} color="#9E9E9E" />
-                </TouchableOpacity>
-            </View>
         </View>
     );
 }
@@ -329,7 +315,6 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingTop: Platform.OS === 'ios' ? 56 : 24,
         paddingBottom: 8,
         backgroundColor: '#fff',
     },

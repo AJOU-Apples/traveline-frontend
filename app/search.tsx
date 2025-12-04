@@ -3,6 +3,7 @@ import {View, StyleSheet, FlatList, TouchableOpacity} from 'react-native';
 import {Text, Searchbar} from 'react-native-paper';
 import {router} from 'expo-router';
 import {Feather} from '@expo/vector-icons';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 // TODO: BE에서 검색 결과 받아오기
 const DUMMY_SEARCH_RESULTS: SearchResult[] = [
@@ -19,6 +20,7 @@ type SearchResult = {
 };
 
 export default function SearchScreen() {
+    const insets = useSafeAreaInsets();
     const [searchQuery, setSearchQuery] = useState('');
     const [results, setResults] = useState<SearchResult[]>([]);
 
@@ -52,7 +54,7 @@ export default function SearchScreen() {
 
     return (
         <View style={styles.container}>
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
                     <Feather name="arrow-left" size={24} color="#000"/>
                 </TouchableOpacity>
@@ -96,7 +98,6 @@ const styles = StyleSheet.create({
     },
     header: {
         backgroundColor: '#fff',
-        paddingTop: 24,
         paddingBottom: 8,
         paddingHorizontal: 16,
         flexDirection: 'row',

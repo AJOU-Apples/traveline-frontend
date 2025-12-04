@@ -45,6 +45,49 @@ export const useAuth = (onLogout?: () => void) => {
         };
     }, [handleAppStateChange]);
 
+    // 주기적인 토큰 리프레시 (30분마다 체크)
+    // Access Token은 1시간 만료이므로, 30분마다 체크하여 만료 5분 전에 리프레시
+    useEffect(() => {
+        if (!authUser) {
+            return;
+        }
+
+        // 즉시 한 번 체크
+        authApi.checkAndRefreshToken().catch((error) => {
+            console.error('Periodic token check failed:', error);
+        });
+
+        // 30분마다 토큰 체크 및 리프레시
+        const interval = setInterval(() => {
+            authApi.checkAndRefreshToken().catch((error) => {
+                console.error('Periodic token refresh failed:', error);
+            });
+        }, 30 * 60 * 1000); // 30분
+
+        return () => {
+            clearInterval(interval);
+        };
+    }, [authUser]);
+
+    // 토큰 만료 콜백 등록
+    useEffect(() => {
+        const handleTokenExpired = () => {
+            setAuthUser(null);
+            onLogout?.();
+            Alert.alert(
+                '세션 만료',
+                '로그인 세션이 만료되었습니다.\n다시 로그인해주세요.',
+                [{text: '확인', style: 'default'}]
+            );
+        };
+        
+        authApi.setOnTokenExpired(handleTokenExpired);
+        
+        return () => {
+            authApi.setOnTokenExpired(null);
+        };
+    }, [onLogout]);
+
     const loadUserData = async () => {
         try {
             // 먼저 토큰 초기화

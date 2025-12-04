@@ -1,24 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Platform, AppState, AppStateStatus } from 'react-native';
+import { AppState, AppStateStatus } from 'react-native';
 import { authApi } from '../utils/authApi';
 import { chatApi } from '../utils/chatApi';
+import { getWebSocketUrl } from '../utils/apiConfig';
 import type { ChatMessageDto, SendChatMessageRequest, WebSocketChatMessageRequest, WebSocketChatMessageEvent } from '../types/chat.types';
-
-// WebSocket URL 설정
-const getChatWebSocketUrl = (planId: string, token: string): string => {
-    if (__DEV__) {
-        // 개발 모드
-        if (Platform.OS === 'android') {
-            return `ws://10.0.2.2:8080/ws/travel-plans/${planId}?token=${token}`;
-        } else {
-            return `ws://localhost:8080/ws/travel-plans/${planId}?token=${token}`;
-        }
-    } else {
-        // 프로덕션 모드 - 실제 서버 URL로 변경 필요
-        const baseUrl = 'wss://your-production-server.com';
-        return `${baseUrl}/ws/travel-plans/${planId}?token=${token}`;
-    }
-};
 
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
 const DEFAULT_RECONNECT_DELAY = 3000; // 3초
@@ -85,7 +70,7 @@ export const useChat = ({
 
         try {
             setWsStatus('connecting');
-            const wsUrl = getChatWebSocketUrl(travelPlanId, token);
+            const wsUrl = getWebSocketUrl(`/ws/travel-plans/${travelPlanId}`, token);
             console.log('Connecting to Chat WebSocket:', wsUrl);
 
             const ws = new WebSocket(wsUrl);

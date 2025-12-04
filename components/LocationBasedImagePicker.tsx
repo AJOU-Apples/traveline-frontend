@@ -1,10 +1,9 @@
-import React, {useState, useEffect} from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     StyleSheet,
     TouchableOpacity,
     FlatList,
-    Image,
     Modal,
     ActivityIndicator,
     Alert,
@@ -12,15 +11,17 @@ import {
     Platform,
     Linking,
 } from 'react-native';
-import {Text} from 'react-native-paper';
-import {Feather} from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import { Text } from 'react-native-paper';
+import { Feather } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
-import {calculateDistance, extractGPSFromExif} from '../src/utils/locationUtils';
+import * as FileSystem from 'expo-file-system';
 
 interface PhotoWithDistance {
     asset: MediaLibrary.Asset;
-    distance?: number; // 장소로부터의 거리 (km)
-    hasLocation: boolean;
+    thumbnailUri?: string; // 썸네일 URI (빠른 로딩용)
+    fullUri?: string; // 실제 파일 URI (업로드용, 선택 시 다운로드)
+    isDownloading?: boolean; // 다운로드 중인지 여부
 }
 
 export interface ExistingPhotoInfo {
@@ -37,8 +38,6 @@ interface LocationBasedImagePickerProps {
         visibility: 'PERSONAL' | 'SHARED',
         orderedExistingPhotoIds: string[] // 기존 사진들의 새로운 순서
     ) => void;
-    placeLatitude?: number;
-    placeLongitude?: number;
     placeName: string;
     initialVisibility?: 'PERSONAL' | 'SHARED'; // 초기 visibility 설정
     hideVisibilitySelector?: boolean; // visibility 선택 UI 숨기기
@@ -46,16 +45,14 @@ interface LocationBasedImagePickerProps {
 }
 
 export default function LocationBasedImagePicker({
-                                                     visible,
-                                                     onClose,
-                                                     onSelectPhotos,
-                                                     placeLatitude,
-                                                     placeLongitude,
-                                                     placeName,
-                                                     initialVisibility = 'SHARED', // 기본값은 SHARED
-                                                     hideVisibilitySelector = false,
-                                                     existingPhotos = [],
-                                                 }: LocationBasedImagePickerProps) {
+    visible,
+    onClose,
+    onSelectPhotos,
+    placeName,
+    initialVisibility = 'SHARED', // 기본값은 SHARED
+    hideVisibilitySelector = false,
+    existingPhotos = [],
+}: LocationBasedImagePickerProps) {
     const [photos, setPhotos] = useState<PhotoWithDistance[]>([]);
     const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set());
     const [selectedPhotoOrder, setSelectedPhotoOrder] = useState<string[]>([]); // 선택 순서 저장 (asset ID)
@@ -63,9 +60,12 @@ export default function LocationBasedImagePicker({
     const [assetIdToPhotoIdMap, setAssetIdToPhotoIdMap] = useState<Map<string, string>>(new Map()); // asset ID → Photo ID 매핑
     const [selectedVisibility, setSelectedVisibility] = useState<'SHARED' | 'PERSONAL'>('SHARED');
     const [loading, setLoading] = useState(false);
+    const [loadingMore, setLoadingMore] = useState(false); // 추가 로딩 중인지 여부
     const [hasPermission, setHasPermission] = useState(false);
     const [permissionDenied, setPermissionDenied] = useState(false);
-    const [hasNearbyPhotos, setHasNearbyPhotos] = useState(false);
+    const [downloadingPhotos, setDownloadingPhotos] = useState<Set<string>>(new Set()); // 다운로드 중인 사진 ID
+    const [endCursor, setEndCursor] = useState<string | undefined>(undefined); // 다음 페이지 커서
+    const [hasNextPage, setHasNextPage] = useState(true); // 더 가져올 사진이 있는지 여부
 
     useEffect(() => {
         if (visible) {
@@ -75,8 +75,55 @@ export default function LocationBasedImagePicker({
             setInitialSelectedPhotoIds(new Set()); // 초기화
             setAssetIdToPhotoIdMap(new Map()); // 초기화
             setSelectedVisibility(initialVisibility); // 초기 visibility 설정
+            setPhotos([]); // 사진 목록 초기화
+            setEndCursor(undefined); // 커서 초기화
+            setHasNextPage(true); // 다음 페이지 있음으로 초기화
         }
     }, [visible, initialVisibility]);
+
+    // 기존 사진 자동 선택 (filename 매칭, orderIndex 순서 반영)
+    useEffect(() => {
+        if (photos.length > 0 && existingPhotos.length > 0 && initialSelectedPhotoIds.size === 0) {
+            const preselectedSet = new Set<string>();
+            const assetToPhotoMap = new Map<string, string>(); // asset ID → Photo ID
+
+            // filename → { assetId, photoId, orderIndex } 매핑
+            const matchedPhotos: Array<{ assetId: string; photoId: string; orderIndex: number }> = [];
+
+            // filename 기반 매칭
+            photos.forEach((photo) => {
+                try {
+                    const assetFilename = photo.asset.filename;
+
+                    // filename으로 매칭 및 orderIndex, photoId 가져오기
+                    const matchedExisting = existingPhotos.find((existing) => {
+                        return existing.filename === assetFilename;
+                    });
+
+                    if (matchedExisting) {
+                        matchedPhotos.push({
+                            assetId: photo.asset.id,
+                            photoId: matchedExisting.id, // 백엔드 Photo ID
+                            orderIndex: matchedExisting.orderIndex ?? 999999 // orderIndex가 없으면 맨 뒤로
+                        });
+                        preselectedSet.add(photo.asset.id);
+                        assetToPhotoMap.set(photo.asset.id, matchedExisting.id); // 매핑 저장
+                    }
+                } catch (error) {
+                    console.error('Asset info 확인 실패:', photo.asset.id, error);
+                }
+            });
+
+            // orderIndex 순서대로 정렬
+            matchedPhotos.sort((a, b) => a.orderIndex - b.orderIndex);
+            const preselectedIds = matchedPhotos.map(p => p.assetId);
+
+            setSelectedPhotos(preselectedSet);
+            setSelectedPhotoOrder(preselectedIds);
+            setInitialSelectedPhotoIds(preselectedSet); // 초기 선택된 사진 저장 (이미 업로드된 사진)
+            setAssetIdToPhotoIdMap(assetToPhotoMap); // asset ID → Photo ID 매핑 저장
+        }
+    }, [photos, existingPhotos]);
 
     const requestPermissionAndLoadPhotos = async () => {
         try {
@@ -84,7 +131,7 @@ export default function LocationBasedImagePicker({
             setPermissionDenied(false);
 
             // 현재 권한 상태 확인
-            const {status: currentStatus, canAskAgain} = await MediaLibrary.getPermissionsAsync();
+            const { status: currentStatus, canAskAgain } = await MediaLibrary.getPermissionsAsync();
 
             if (currentStatus === 'granted') {
                 setHasPermission(true);
@@ -94,7 +141,7 @@ export default function LocationBasedImagePicker({
 
             // 권한이 없고 요청할 수 있는 경우
             if (canAskAgain) {
-                const {status: newStatus} = await MediaLibrary.requestPermissionsAsync();
+                const { status: newStatus } = await MediaLibrary.requestPermissionsAsync();
 
                 if (newStatus === 'granted') {
                     setHasPermission(true);
@@ -107,8 +154,8 @@ export default function LocationBasedImagePicker({
                         '권한 필요',
                         '사진을 불러오려면 갤러리 접근 권한이 필요합니다.',
                         [
-                            {text: '취소', style: 'cancel'},
-                            {text: '설정으로 이동', onPress: openSettings}
+                            { text: '취소', style: 'cancel' },
+                            { text: '설정으로 이동', onPress: openSettings }
                         ]
                     );
                 }
@@ -121,8 +168,8 @@ export default function LocationBasedImagePicker({
                     '권한 필요',
                     '사진을 불러오려면 설정에서 갤러리 접근 권한을 허용해주세요.',
                     [
-                        {text: '취소', style: 'cancel'},
-                        {text: '설정으로 이동', onPress: openSettings}
+                        { text: '취소', style: 'cancel' },
+                        { text: '설정으로 이동', onPress: openSettings }
                     ]
                 );
             }
@@ -152,128 +199,128 @@ export default function LocationBasedImagePicker({
         }
     };
 
-    const loadPhotos = async () => {
+    const loadPhotos = async (isLoadMore = false) => {
         try {
-            // 최근 사진 200장 가져오기
+            if (isLoadMore) {
+                setLoadingMore(true);
+            } else {
+                setLoading(true);
+            }
+
+            // 초기 로딩은 30개, 추가 로딩도 30개씩
             const result = await MediaLibrary.getAssetsAsync({
-                first: 200,
+                first: 30,
+                after: isLoadMore ? endCursor : undefined,
                 mediaType: 'photo',
                 sortBy: 'creationTime',
             });
 
-            const photosWithDistance: PhotoWithDistance[] = [];
+            // getAssetInfoAsync를 호출하지 않고 asset.uri만 사용 (빠른 로딩)
+            // asset.uri (ph:// 경로 등)만으로도 Image 컴포넌트가 썸네일을 빠르게 렌더링 가능
+            const photosWithDistance: PhotoWithDistance[] = result.assets.map(asset => ({
+                asset,
+                thumbnailUri: asset.uri, // asset.uri를 썸네일로 직접 사용
+                fullUri: undefined, // 실제 파일 경로는 선택 시 다운로드
+            }));
 
-            for (const asset of result.assets) {
-                try {
-                    // 사진의 EXIF 정보 가져오기
-                    const assetInfo = await MediaLibrary.getAssetInfoAsync(asset, {
-                        shouldDownloadFromNetwork: false,
-                    });
-
-                    let distance: number | undefined;
-                    let hasLocation = false;
-
-                    // 장소 위치 정보와 사진의 위치 정보가 모두 있는 경우
-                    if (
-                        placeLatitude !== undefined &&
-                        placeLongitude !== undefined &&
-                        assetInfo.location
-                    ) {
-                        const {latitude, longitude} = assetInfo.location;
-                        if (latitude && longitude) {
-                            distance = calculateDistance(
-                                placeLatitude,
-                                placeLongitude,
-                                latitude,
-                                longitude
-                            );
-                            hasLocation = true;
-                        }
-                    }
-
-                    photosWithDistance.push({
-                        asset,
-                        distance,
-                        hasLocation,
-                    });
-                } catch (error) {
-                    // EXIF 정보를 가져올 수 없는 경우, 위치 정보 없이 추가
-                    photosWithDistance.push({
-                        asset,
-                        hasLocation: false,
-                    });
-                }
+            // 기존 사진 목록에 추가
+            if (isLoadMore) {
+                setPhotos(prev => [...prev, ...photosWithDistance]);
+            } else {
+                setPhotos(photosWithDistance);
             }
 
-            // 1km 이내의 사진이 있는지 확인
-            const hasPhotosNearby = photosWithDistance.some(
-                photo => photo.hasLocation && photo.distance !== undefined && photo.distance <= 1
-            );
-            setHasNearbyPhotos(hasPhotosNearby);
+            // 다음 페이지 정보 업데이트
+            setEndCursor(result.endCursor);
+            setHasNextPage(result.hasNextPage);
 
-            // 1km 이내의 사진이 있으면 거리 순으로 정렬, 없으면 최신 순 유지
-            if (hasPhotosNearby) {
-                photosWithDistance.sort((a, b) => {
-                    if (a.hasLocation && b.hasLocation) {
-                        return (a.distance || 0) - (b.distance || 0);
-                    } else if (a.hasLocation) {
-                        return -1;
-                    } else if (b.hasLocation) {
-                        return 1;
-                    } else {
-                        return 0; // 둘 다 위치 정보가 없으면 원래 순서 유지
-                    }
-                });
+            if (isLoadMore) {
+                setLoadingMore(false);
+            } else {
+                setLoading(false);
             }
-            // hasPhotosNearby가 false면 원래 순서(최신 순) 유지
 
-            setPhotos(photosWithDistance);
-
-            // 기존 사진 자동 선택 (filename 매칭, orderIndex 순서 반영)
-            if (existingPhotos.length > 0) {
-                const preselectedSet = new Set<string>();
-                const assetToPhotoMap = new Map<string, string>(); // asset ID → Photo ID
-
-                // filename → { assetId, photoId, orderIndex } 매핑
-                const matchedPhotos: Array<{ assetId: string; photoId: string; orderIndex: number }> = [];
-
-                // filename 기반 매칭
-                photosWithDistance.forEach((photo) => {
-                    try {
-                        const assetFilename = photo.asset.filename;
-
-                        // filename으로 매칭 및 orderIndex, photoId 가져오기
-                        const matchedExisting = existingPhotos.find((existing) => {
-                            return existing.filename === assetFilename;
-                        });
-
-                        if (matchedExisting) {
-
-                            matchedPhotos.push({
-                                assetId: photo.asset.id,
-                                photoId: matchedExisting.id, // 백엔드 Photo ID
-                                orderIndex: matchedExisting.orderIndex ?? 999999 // orderIndex가 없으면 맨 뒤로
-                            });
-                            preselectedSet.add(photo.asset.id);
-                            assetToPhotoMap.set(photo.asset.id, matchedExisting.id); // 매핑 저장
-                        }
-                    } catch (error) {
-                        console.error('Asset info 확인 실패:', photo.asset.id, error);
-                    }
-                });
-
-                // orderIndex 순서대로 정렬
-                matchedPhotos.sort((a, b) => a.orderIndex - b.orderIndex);
-                const preselectedIds = matchedPhotos.map(p => p.assetId);
-
-                setSelectedPhotos(preselectedSet);
-                setSelectedPhotoOrder(preselectedIds);
-                setInitialSelectedPhotoIds(preselectedSet); // 초기 선택된 사진 저장 (이미 업로드된 사진)
-                setAssetIdToPhotoIdMap(assetToPhotoMap); // asset ID → Photo ID 매핑 저장
-            }
+            // 기존 사진 자동 선택은 useEffect에서 처리
         } catch (error) {
             console.error('사진 로딩 오류:', error);
             Alert.alert('오류', '사진을 불러오는 중 오류가 발생했습니다.');
+            if (isLoadMore) {
+                setLoadingMore(false);
+            } else {
+                setLoading(false);
+            }
+        }
+    };
+
+    // 추가 사진 로딩 (무한 스크롤)
+    const loadMorePhotos = async () => {
+        if (!hasNextPage || loadingMore || loading) {
+            return;
+        }
+        await loadPhotos(true);
+    };
+
+    // 사진 선택 시 실제 파일 다운로드 (URI 반환)
+    const downloadPhoto = async (assetId: string): Promise<string | null> => {
+        const photo = photos.find(p => p.asset.id === assetId);
+
+        // 이미 fullUri가 있다면 그것을 반환
+        if (photo?.fullUri) {
+            return photo.fullUri;
+        }
+
+        if (!photo) {
+            return null;
+        }
+
+        // 이미 다운로드 중이면 스킵
+        if (downloadingPhotos.has(assetId)) {
+            return null;
+        }
+
+        setDownloadingPhotos(prev => new Set(prev).add(assetId));
+
+        try {
+            const assetInfo = await MediaLibrary.getAssetInfoAsync(photo.asset, {
+                shouldDownloadFromNetwork: true, // iCloud 사진 다운로드
+            });
+
+            // file://로 시작하는 실제 파일 경로만 사용 (ph:// 제외)
+            let fullUri: string | undefined;
+            if (assetInfo.localUri && assetInfo.localUri.startsWith('file://')) {
+                fullUri = assetInfo.localUri;
+            } else if (assetInfo.uri && assetInfo.uri.startsWith('file://')) {
+                fullUri = assetInfo.uri;
+            }
+            // ph:// URI는 사용하지 않음 (업로드 불가)
+
+            // 상태 업데이트 (UI 갱신용)
+            setPhotos(prevPhotos =>
+                prevPhotos.map(p =>
+                    p.asset.id === assetId
+                        ? { ...p, fullUri: fullUri, isDownloading: false }
+                        : p
+                )
+            );
+
+            return fullUri || null;
+        } catch (error) {
+            console.error(`Failed to download asset ${assetId}:`, error);
+            // 에러 발생 시 fullUri는 undefined로 유지 (ph://는 업로드 불가)
+            setPhotos(prevPhotos =>
+                prevPhotos.map(p =>
+                    p.asset.id === assetId
+                        ? { ...p, isDownloading: false }
+                        : p
+                )
+            );
+            return null;
+        } finally {
+            setDownloadingPhotos(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(assetId);
+                return newSet;
+            });
         }
     };
 
@@ -288,48 +335,56 @@ export default function LocationBasedImagePicker({
                 newSet.add(assetId);
                 // 순서 배열에 추가
                 setSelectedPhotoOrder((prevOrder) => [...prevOrder, assetId]);
+                // 사진 선택 시 실제 파일 다운로드 시작
+                downloadPhoto(assetId);
             }
             return newSet;
         });
     };
 
-    const handleConfirm = () => {
-        // selectedPhotoOrder를 기존 사진과 새 사진으로 분리
-        const orderedExistingPhotoIds: string[] = []; // 기존 사진의 Photo ID (순서대로)
-        const newlySelectedAssetIds: string[] = []; // 새 사진의 asset ID (순서대로)
+    const handleConfirm = async () => {
+        setLoading(true); // 전체 로딩 시작
 
-        selectedPhotoOrder.forEach((assetId) => {
-            if (initialSelectedPhotoIds.has(assetId)) {
-                // 기존 사진: asset ID → Photo ID 변환
-                const photoId = assetIdToPhotoIdMap.get(assetId);
-                if (photoId) {
-                    orderedExistingPhotoIds.push(photoId);
+        try {
+            // 1. 새로 선택된 사진들의 Asset ID 추출
+            const newlySelectedAssetIds = selectedPhotoOrder.filter(id => !initialSelectedPhotoIds.has(id));
+
+            // 2. 각 Asset ID에 대해 다운로드 실행 (병렬 처리)
+            // map 안에서 downloadPhoto를 호출하면 최신 URI를 반환받을 수 있음
+            const uriPromises = newlySelectedAssetIds.map(async (assetId) => {
+                return await downloadPhoto(assetId);
+            });
+            const results = await Promise.all(uriPromises);
+
+            // 3. 유효한 URI만 필터링 (null 제외, ph:// 제외)
+            const newPhotoUris = results.filter((uri): uri is string =>
+                uri !== null &&
+                (uri.startsWith('file://') || uri.startsWith('content://') || uri.startsWith('/'))
+            );
+
+            // 4. 기존 사진 ID 순서 정리
+            const orderedExistingPhotoIds: string[] = [];
+            selectedPhotoOrder.forEach((assetId) => {
+                if (initialSelectedPhotoIds.has(assetId)) {
+                    const photoId = assetIdToPhotoIdMap.get(assetId);
+                    if (photoId) {
+                        orderedExistingPhotoIds.push(photoId);
+                    }
                 }
-            } else {
-                // 새 사진
-                newlySelectedAssetIds.push(assetId);
-            }
-        });
+            });
 
-        // 새로 추가된 사진의 URI 추출
-        const photoMap = new Map(photos.map(p => [p.asset.id, p.asset.uri]));
-        const newPhotoUris = newlySelectedAssetIds
-            .map(id => photoMap.get(id))
-            .filter((uri): uri is string => uri !== undefined);
-
-        // 새 사진 URI, visibility, 기존 사진 순서 전달
-        onSelectPhotos(newPhotoUris, selectedVisibility, orderedExistingPhotoIds);
-        setSelectedVisibility('SHARED'); // 초기화
-        onClose();
-    };
-
-    const formatDistance = (distance?: number): string => {
-        if (distance === undefined) return '';
-        if (distance < 1) {
-            return `${Math.round(distance * 1000)}m`;
+            // 5. 결과 전달
+            onSelectPhotos(newPhotoUris, selectedVisibility, orderedExistingPhotoIds);
+            setSelectedVisibility('SHARED');
+            onClose();
+        } catch (error) {
+            console.error('확인 처리 중 오류:', error);
+            Alert.alert('오류', '사진을 처리하는 중 문제가 발생했습니다.');
+        } finally {
+            setLoading(false);
         }
-        return `${distance.toFixed(1)}km`;
     };
+
 
     return (
         <Modal
@@ -342,16 +397,10 @@ export default function LocationBasedImagePicker({
                 {/* 헤더 */}
                 <View style={styles.header}>
                     <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                        <Feather name="x" size={24} color="#000"/>
+                        <Feather name="x" size={24} color="#000" />
                     </TouchableOpacity>
                     <View style={styles.headerCenter}>
                         <Text style={styles.headerTitle}>{placeName}</Text>
-                        {!loading && hasNearbyPhotos && (
-                            <Text style={styles.headerSubtitle}>근처 사진 우선 표시</Text>
-                        )}
-                        {!loading && !hasNearbyPhotos && photos.length > 0 && (
-                            <Text style={styles.headerSubtitle}>최신 사진 순</Text>
-                        )}
                     </View>
                     <TouchableOpacity
                         onPress={handleConfirm}
@@ -413,7 +462,7 @@ export default function LocationBasedImagePicker({
                 {/* 로딩 */}
                 {loading && (
                     <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color="#088CDA"/>
+                        <ActivityIndicator size="large" color="#088CDA" />
                         <Text style={styles.loadingText}>사진을 불러오는 중...</Text>
                     </View>
                 )}
@@ -432,7 +481,17 @@ export default function LocationBasedImagePicker({
                             style={styles.photoList}
                             contentContainerStyle={styles.photoGrid}
                             columnWrapperStyle={styles.photoRow}
-                            renderItem={({item, index}) => {
+                            onEndReached={loadMorePhotos}
+                            onEndReachedThreshold={0.5}
+                            ListFooterComponent={
+                                loadingMore ? (
+                                    <View style={styles.loadingMoreContainer}>
+                                        <ActivityIndicator size="small" color="#088CDA" />
+                                        <Text style={styles.loadingMoreText}>사진을 불러오는 중...</Text>
+                                    </View>
+                                ) : null
+                            }
+                            renderItem={({ item, index }) => {
                                 const isSelected = selectedPhotos.has(item.asset.id);
                                 const orderIndex = selectedPhotoOrder.indexOf(item.asset.id);
                                 const orderNumber = orderIndex >= 0 ? orderIndex + 1 : 0;
@@ -446,23 +505,24 @@ export default function LocationBasedImagePicker({
                                         onPress={() => togglePhotoSelection(item.asset.id)}
                                     >
                                         <Image
-                                            source={{uri: item.asset.uri}}
+                                            source={{ uri: item.thumbnailUri || item.asset.uri }}
                                             style={styles.photoImage}
+                                            contentFit="cover"
+                                            transition={200}
+                                            cachePolicy="memory-disk"
                                         />
+                                        {downloadingPhotos.has(item.asset.id) && (
+                                            <View style={styles.downloadingOverlay}>
+                                                <ActivityIndicator size="small" color="#fff" />
+                                            </View>
+                                        )}
                                         {isSelected && (
                                             <>
-                                                <View style={styles.selectedOverlay}/>
+                                                <View style={styles.selectedOverlay} />
                                                 <View style={styles.orderBadge}>
                                                     <Text style={styles.orderText}>{orderNumber}</Text>
                                                 </View>
                                             </>
-                                        )}
-                                        {!isSelected && hasNearbyPhotos && item.hasLocation && item.distance !== undefined && (
-                                            <View style={styles.distanceBadge}>
-                                                <Text style={styles.distanceText}>
-                                                    {formatDistance(item.distance)}
-                                                </Text>
-                                            </View>
                                         )}
                                     </TouchableOpacity>
                                 );
@@ -474,7 +534,7 @@ export default function LocationBasedImagePicker({
                 {/* 권한 없음 */}
                 {!loading && !hasPermission && (
                     <View style={styles.emptyContainer}>
-                        <Feather name="image" size={64} color="#C7C7C7"/>
+                        <Feather name="image" size={64} color="#C7C7C7" />
                         <Text style={styles.emptyText}>갤러리 접근 권한이 필요합니다</Text>
                         <Text style={styles.permissionHintText}>
                             {placeName}에 사진을 추가하려면{'\n'}
@@ -502,7 +562,7 @@ export default function LocationBasedImagePicker({
     );
 }
 
-const {width} = Dimensions.get('window');
+const { width } = Dimensions.get('window');
 const PHOTO_SIZE = (width - 32 - 8) / 3; // 3열 그리드
 
 const styles = StyleSheet.create({
@@ -609,7 +669,7 @@ const styles = StyleSheet.create({
         position: 'absolute',
         top: '50%',
         left: '50%',
-        transform: [{translateX: -20}, {translateY: -20}],
+        transform: [{ translateX: -20 }, { translateY: -20 }],
         width: 40,
         height: 40,
         borderRadius: 20,
@@ -624,19 +684,15 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         color: '#fff',
     },
-    distanceBadge: {
+    downloadingOverlay: {
         position: 'absolute',
-        bottom: 4,
-        right: 4,
-        backgroundColor: 'rgba(0, 0, 0, 0.7)',
-        paddingHorizontal: 6,
-        paddingVertical: 2,
-        borderRadius: 4,
-    },
-    distanceText: {
-        fontSize: 10,
-        fontWeight: '600',
-        color: '#fff',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     emptyContainer: {
         flex: 1,
@@ -700,6 +756,16 @@ const styles = StyleSheet.create({
     visibilityTextActive: {
         color: '#088CDA',
         fontWeight: '600',
+    },
+    loadingMoreContainer: {
+        paddingVertical: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+    },
+    loadingMoreText: {
+        fontSize: 12,
+        color: '#9E9E9E',
     },
 });
 

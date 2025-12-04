@@ -2,14 +2,44 @@ import React, { useEffect, useState } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { authApi } from '../src/utils/authApi';
+import * as Linking from 'expo-linking';
 
 export default function IndexScreen() {
   const router = useRouter();
   const [isChecking, setIsChecking] = useState(true);
 
   useEffect(() => {
-    checkAuthStatus();
+    // 딥링크로 앱이 열린 경우 처리
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        console.log('App opened with URL:', url);
+        handleDeepLink(url);
+      } else {
+        checkAuthStatus();
+      }
+    });
   }, []);
+
+  const handleDeepLink = (url: string) => {
+    try {
+      // traveline://invite/{token} 형식 파싱
+      const match = url.match(/traveline:\/\/invite\/([^/?]+)/);
+      if (match && match[1]) {
+        const token = match[1];
+        console.log('Navigating to invite-accept with token:', token);
+        router.replace({
+          pathname: '/invite-accept',
+          params: { token }
+        });
+        return;
+      }
+    } catch (error) {
+      console.error('Error handling deep link in index:', error);
+    }
+    
+    // 딥링크가 아니면 일반 인증 체크
+    checkAuthStatus();
+  };
 
   const checkAuthStatus = async () => {
     try {

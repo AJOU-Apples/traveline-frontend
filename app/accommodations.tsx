@@ -3,11 +3,13 @@ import {View, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, Alert, 
 import {Text} from 'react-native-paper';
 import {router, useFocusEffect, useLocalSearchParams} from 'expo-router';
 import {Feather} from '@expo/vector-icons';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useUser, type Accommodation} from '../src/context/UserContext';
 import AccommodationCard from '../components/AccommodationCard';
 
 export default function AccommodationsScreen() {
     const {planId} = useLocalSearchParams<{ planId: string }>();
+    const insets = useSafeAreaInsets();
     const {getAccommodationsByPlan, deleteAccommodation, updateAccommodation} = useUser();
     const [selectedAccommodationId, setSelectedAccommodationId] = useState<string | null>(null);
     const [showActionModal, setShowActionModal] = useState(false);
@@ -118,7 +120,7 @@ export default function AccommodationsScreen() {
     return (
         <View style={styles.container}>
             {/* 상단바 */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
                 <TouchableOpacity onPress={handleBack} style={styles.backButton}>
                     <Feather name="arrow-left" size={24} color="#000"/>
                 </TouchableOpacity>
@@ -187,7 +189,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        paddingTop: Platform.OS === 'ios' ? 56 : 24,
         paddingBottom: 8,
         paddingHorizontal: 16,
         position: 'relative',

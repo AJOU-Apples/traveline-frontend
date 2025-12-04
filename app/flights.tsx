@@ -3,11 +3,13 @@ import { View, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, Alert,
 import { Text } from 'react-native-paper';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUser, type Flight } from '../src/context/UserContext';
 import FlightCard from '../components/FlightCard';
 
 export default function FlightsScreen() {
     const { planId } = useLocalSearchParams<{ planId: string }>();
+    const insets = useSafeAreaInsets();
     const { getFlightsByPlan, deleteFlight, updateFlight } = useUser();
     const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
     const [showActionModal, setShowActionModal] = useState(false);
@@ -145,7 +147,7 @@ export default function FlightsScreen() {
     return (
         <View style={styles.container}>
             {/* 상단바 */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
                 <TouchableOpacity onPress={handleBack} style={styles.backButton}>
                     <Feather name="arrow-left" size={24} color="#000" />
                 </TouchableOpacity>
@@ -214,7 +216,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        paddingTop: Platform.OS === 'ios' ? 56 : 24,
         paddingBottom: 8,
         paddingHorizontal: 16,
         position: 'relative',

@@ -132,6 +132,20 @@ export const useTravelPlan = (authUser: AuthUser | null) => {
         }
     };
 
+    const deleteTravelPlan = async (id: string) => {
+        if (!authUser) {
+            throw new Error('로그인이 필요합니다.');
+        }
+
+        try {
+            await travelPlanApi.deleteTravelPlan(parseInt(id));
+            setTravelPlans((prev) => prev.filter((plan) => plan.id !== id));
+        } catch (error) {
+            console.error('Failed to delete travel plan:', error);
+            throw error;
+        }
+    };
+
     return {
         travelPlans,
         setTravelPlans,
@@ -140,6 +154,7 @@ export const useTravelPlan = (authUser: AuthUser | null) => {
         addTravelPlan,
         getTravelPlan,
         updateTravelPlan,
+        deleteTravelPlan,
     };
 };
 

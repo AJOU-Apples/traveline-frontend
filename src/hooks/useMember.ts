@@ -42,6 +42,37 @@ export const useMember = (authUser: AuthUser | null, loadTravelPlans?: () => Pro
     try {
       const membersDto = await travelPlanApi.getMembersByTravelPlan(parseInt(planId));
 
+      // API 응답이 배열이 아닌 경우 처리
+      if (!Array.isArray(membersDto)) {
+        console.warn('API 응답이 배열이 아닙니다:', membersDto);
+        // 빈 배열 반환 또는 응답 구조에 따라 처리
+        if (membersDto && typeof membersDto === 'object' && 'members' in membersDto) {
+          // 응답이 { members: [...] } 형태인 경우
+          const membersArray = (membersDto as any).members;
+          if (Array.isArray(membersArray)) {
+            return membersArray.map(member => ({
+              id: member.id.toString(),
+              userId: member.userId.toString(),
+              username: member.username,
+              name: member.name,
+              email: member.email,
+              profileImage: member.profileImage,
+              role: member.role,
+              status: member.status,
+              joinedAt: member.joinedAt,
+              invitedAt: member.invitedAt,
+              invitedBy: member.invitedBy ? {
+                id: member.invitedBy.id.toString(),
+                username: member.invitedBy.username,
+              } : undefined,
+              invitedByName: member.invitedByName,
+            }));
+          }
+        }
+        // 배열이 아니면 빈 배열 반환
+        return [];
+      }
+
       return membersDto.map(member => ({
         id: member.id.toString(),
         userId: member.userId.toString(),

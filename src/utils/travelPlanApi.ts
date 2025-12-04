@@ -1,31 +1,6 @@
 import { authApi } from './authApi';
-import { Platform } from 'react-native';
 import { CityDto } from './cityApi';
-
-// 플랫폼별 API URL 설정
-const getApiBaseUrl = () => {
-    if (__DEV__) {
-        if (Platform.OS === 'android') {
-            return 'http://10.0.2.2:8080/api';
-        } else {
-            return 'http://localhost:8080/api';
-        }
-    } else {
-        return 'https://your-production-server.com/api';
-    }
-};
-
-const getServerBaseUrl = () => {
-    if (__DEV__) {
-        if (Platform.OS === 'android') {
-            return 'http://10.0.2.2:8080';
-        } else {
-            return 'http://localhost:8080';
-        }
-    } else {
-        return 'https://your-production-server.com';
-    }
-};
+import { getApiBaseUrl, getServerBaseUrl } from './apiConfig';
 
 const API_BASE_URL = getApiBaseUrl();
 const SERVER_BASE_URL = getServerBaseUrl();
@@ -1966,7 +1941,30 @@ class TravelPlanApi {
                 throw new Error('멤버 목록 조회에 실패했습니다.');
             }
 
-            return response.json();
+            const data = await response.json();
+
+            // 응답이 배열인지 확인
+            if (Array.isArray(data)) {
+                return data;
+            }
+
+            // 응답이 객체로 감싸져 있는 경우 처리
+            if (data && typeof data === 'object') {
+                // 일반적인 응답 구조 확인
+                if (Array.isArray(data.members)) {
+                    return data.members;
+                }
+                if (Array.isArray(data.data)) {
+                    return data.data;
+                }
+                if (Array.isArray(data.content)) {
+                    return data.content;
+                }
+            }
+
+            // 배열이 아니면 빈 배열 반환
+            console.warn('API 응답이 배열이 아닙니다:', data);
+            return [];
         } catch (error) {
             console.error('Get members error:', error);
             throw error;
@@ -2076,6 +2074,129 @@ class TravelPlanApi {
             }
         } catch (error) {
             console.error('Remove member error:', error);
+            throw error;
+        }
+    }
+
+    // ============ 초대 코드 API ============
+
+    // 초대 코드 조회
+    async getInviteCode(travelPlanId: number): Promise<{ code: string; expiresAt: string } | null> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${travelPlanId}/invite-code`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (response.status === 404) {
+                return null; // 초대 코드가 없음
+            }
+
+            if (!response.ok) {
+                return null; // 에러 발생 시 null 반환
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get invite code error:', error);
+            return null; // 에러 발생 시 null 반환
+        }
+    }
+
+    // 초대 코드 생성
+    async generateInviteCode(travelPlanId: number): Promise<{ code: string; expiresAt: string }> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${travelPlanId}/invite-code`,
+                {
+                    method: 'POST',
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '초대 코드 생성에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Generate invite code error:', error);
+            throw error;
+        }
+    }
+
+    // 초대 코드 정보 조회 (비인증)
+    async getInviteInfoByCode(code: string): Promise<TravelPlanDto> {
+        try {
+            // 코드를 대문자로 변환 (대소문자 구분 없이 처리)
+            const upperCode = code.toUpperCase();
+            const response = await fetch(
+                `${API_BASE_URL}/travel-plans/invite/${upperCode}`,
+                {
+                    method: 'GET',
+                }
+            );
+
+            if (!response.ok) {
+                if (response.status === 404) {
+                    throw new Error('초대 코드를 찾을 수 없습니다.');
+                }
+                if (response.status === 400) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || '유효하지 않은 초대 코드입니다.');
+                }
+                throw new Error('초대 정보 조회에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Get invite info error:', error);
+            throw error;
+        }
+    }
+
+    // 코드로 초대 수락
+    async acceptInviteByCode(code: string): Promise<MemberDto> {
+        try {
+            // 코드를 대문자로 변환 (대소문자 구분 없이 처리)
+            const upperCode = code.toUpperCase();
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/invite/accept`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({ code: upperCode }),
+                }
+            );
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || '초대 수락에 실패했습니다.');
+            }
+
+            return response.json();
+        } catch (error) {
+            console.error('Accept invite by code error:', error);
+            throw error;
+        }
+    }
+
+    // 초대 코드 무효화
+    async revokeInviteCode(travelPlanId: number): Promise<void> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${travelPlanId}/invite-code`,
+                {
+                    method: 'DELETE',
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error('초대 코드 무효화에 실패했습니다.');
+            }
+        } catch (error) {
+            console.error('Revoke invite code error:', error);
             throw error;
         }
     }
