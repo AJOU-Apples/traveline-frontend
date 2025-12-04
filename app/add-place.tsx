@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     StyleSheet,
@@ -9,12 +9,13 @@ import {
     Alert,
     ActivityIndicator
 } from 'react-native';
-import {Text} from 'react-native-paper';
-import {router, useLocalSearchParams} from 'expo-router';
-import {Feather} from '@expo/vector-icons';
-import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {useUser} from '../src/context/UserContext';
+import { Text } from 'react-native-paper';
+import { router, useLocalSearchParams } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useUser } from '../src/context/UserContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 
 const RECENT_SEARCHES_KEY = 'recent_place_searches';
 const MAX_RECENT_SEARCHES = 10; // 최대 저장 개수
@@ -27,24 +28,27 @@ type SearchResult = {
     longitude?: number;
 };
 
-// Google Places API 키 (app.json에 설정된 키 사용)
+// Google Places API 키 (app.config.js에서 환경 변수로 설정된 키 사용)
 // IMPORTANT: Google Places API를 사용하려면 다음 설정이 필요합니다:
 // 1. Google Cloud Console에서 Places API 활성화
 // 2. API 키에 Places API 권한 추가
 // 3. 실제 프로덕션에서는 백엔드에서 호출하는 것이 권장됨 (API 키 노출 방지)
 // TODO: 추후 BE API로 이전 예정
-const GOOGLE_MAPS_API_KEY = 'AIzaSyCoD_272LfO6ENbwlzvrnlJlvPh6ysLKSs';
+const GOOGLE_MAPS_API_KEY = Platform.select({
+    ios: Constants.expoConfig?.ios?.config?.googleMapsApiKey,
+    android: Constants.expoConfig?.android?.config?.googleMaps?.apiKey,
+}) || '';
 
 export default function AddPlaceScreen() {
     const insets = useSafeAreaInsets();
-    const {planId, dayNumber, destination, latitude, longitude} = useLocalSearchParams<{
+    const { planId, dayNumber, destination, latitude, longitude } = useLocalSearchParams<{
         planId: string;
         dayNumber: string;
         destination?: string;
         latitude?: string;
         longitude?: string;
     }>();
-    const {addPlaceToDay} = useUser();
+    const { addPlaceToDay } = useUser();
     const [searchQuery, setSearchQuery] = useState('');
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -113,6 +117,11 @@ export default function AddPlaceScreen() {
 
     const handleSearchSubmit = async () => {
         if (!searchQuery.trim()) {
+            return;
+        }
+
+        if (!GOOGLE_MAPS_API_KEY) {
+            Alert.alert('오류', 'Google Maps API 키가 설정되지 않았습니다. 환경 변수를 확인해주세요.');
             return;
         }
 
@@ -228,7 +237,7 @@ export default function AddPlaceScreen() {
             <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
                 <View style={styles.searchContainer}>
                     <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-                        <Feather name="arrow-left" size={24} color="#000"/>
+                        <Feather name="arrow-left" size={24} color="#000" />
                     </TouchableOpacity>
                     <View style={styles.searchBar}>
                         <TextInput
@@ -242,7 +251,7 @@ export default function AddPlaceScreen() {
                             autoFocus
                         />
                         <TouchableOpacity onPress={handleSearchSubmit}>
-                            <Feather name="search" size={16} color="#585858"/>
+                            <Feather name="search" size={16} color="#585858" />
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -259,7 +268,7 @@ export default function AddPlaceScreen() {
                     {/* 검색 지역 표시 */}
                     {destination && (
                         <View style={styles.locationBadge}>
-                            <Feather name="map-pin" size={12} color="#585858"/>
+                            <Feather name="map-pin" size={12} color="#585858" />
                             <Text style={styles.locationBadgeText}>{destination} 주변</Text>
                         </View>
                     )}
@@ -291,7 +300,7 @@ export default function AddPlaceScreen() {
                 {/* 로딩 표시 */}
                 {isLoading && (
                     <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color="#088CDA"/>
+                        <ActivityIndicator size="large" color="#088CDA" />
                     </View>
                 )}
 

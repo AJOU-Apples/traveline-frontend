@@ -28,7 +28,7 @@ import type {TravelPlanEvent} from '../src/types/webSocket.types';
 const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get('window');
 
 const MIN_MAP_HEIGHT = 0;
-const MAX_MAP_HEIGHT = 200;
+const MAX_MAP_HEIGHT = SCREEN_HEIGHT * 0.5;
 const INITIAL_MAP_HEIGHT = 180;
 
 // Haversine formula를 사용한 두 좌표 간 거리 계산 (km 단위)
@@ -144,7 +144,7 @@ async function fetchRoute(
 const GOOGLE_MAPS_API_KEY = Platform.select({
     ios: Constants.expoConfig?.ios?.config?.googleMapsApiKey,
     android: Constants.expoConfig?.android?.config?.googleMaps?.apiKey,
-}) || 'AIzaSyCoD_272LfO6ENbwlzvrnlJlvPh6ysLKSs'; // Fallback
+}) || '';
 
 export default function PlanDetailScreen() {
     const {planId} = useLocalSearchParams<{ planId: string }>();
