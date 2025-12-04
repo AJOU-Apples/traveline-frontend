@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, {useState, useEffect} from 'react';
 import {
     View,
     StyleSheet,
@@ -9,20 +9,20 @@ import {
     ActivityIndicator,
     Alert,
 } from 'react-native';
-import { Text } from 'react-native-paper';
-import { router, useLocalSearchParams } from 'expo-router';
-import { MaterialIcons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { travelPlanApi } from '../src/utils/travelPlanApi';
-import type { TravelPlanDto } from '../src/utils/travelPlanApi';
-import { useUser } from '../src/context/UserContext';
+import {Text} from 'react-native-paper';
+import {router, useLocalSearchParams} from 'expo-router';
+import {MaterialIcons} from '@expo/vector-icons';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import {travelPlanApi} from '../src/utils/travelPlanApi';
+import type {TravelPlanDto} from '../src/utils/travelPlanApi';
+import {useUser} from '../src/context/UserContext';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const {width: SCREEN_WIDTH} = Dimensions.get('window');
 
 export default function InviteAcceptScreen() {
-    const { token } = useLocalSearchParams<{ token: string }>();
+    const {token} = useLocalSearchParams<{ token: string }>();
     const insets = useSafeAreaInsets();
-    const { authUser } = useUser();
+    const {authUser} = useUser();
     const [inviteInfo, setInviteInfo] = useState<TravelPlanDto | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isAccepting, setIsAccepting] = useState(false);
@@ -38,8 +38,6 @@ export default function InviteAcceptScreen() {
 
         try {
             setIsLoading(true);
-            const info = await travelPlanApi.getInviteInfo(token);
-            setInviteInfo(info);
         } catch (error: any) {
             console.error('Failed to load invite info:', error);
             Alert.alert(
@@ -66,8 +64,7 @@ export default function InviteAcceptScreen() {
 
         try {
             setIsAccepting(true);
-            await travelPlanApi.acceptInviteByLink(token);
-            
+
             Alert.alert(
                 '초대 수락 완료',
                 '여행 계획에 참여되었습니다.',
@@ -78,7 +75,7 @@ export default function InviteAcceptScreen() {
                             if (inviteInfo) {
                                 router.replace({
                                     pathname: '/plan-detail',
-                                    params: { planId: inviteInfo.id.toString() },
+                                    params: {planId: inviteInfo.id.toString()},
                                 });
                             } else {
                                 router.replace('/(tabs)');
@@ -118,14 +115,14 @@ export default function InviteAcceptScreen() {
     if (isLoading) {
         return (
             <View style={styles.container}>
-                <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+                <View style={[styles.header, {paddingTop: insets.top + 16}]}>
                     <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                        <MaterialIcons name="arrow-back" size={24} color="#000" />
+                        <MaterialIcons name="arrow-back" size={24} color="#000"/>
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>초대 수락</Text>
                 </View>
                 <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color="#088CDA" />
+                    <ActivityIndicator size="large" color="#088CDA"/>
                     <Text style={styles.loadingText}>초대 정보를 불러오는 중...</Text>
                 </View>
             </View>
@@ -135,14 +132,14 @@ export default function InviteAcceptScreen() {
     if (!inviteInfo) {
         return (
             <View style={styles.container}>
-                <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+                <View style={[styles.header, {paddingTop: insets.top + 16}]}>
                     <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                        <MaterialIcons name="arrow-back" size={24} color="#000" />
+                        <MaterialIcons name="arrow-back" size={24} color="#000"/>
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>초대 수락</Text>
                 </View>
                 <View style={styles.errorContainer}>
-                    <MaterialIcons name="error-outline" size={48} color="#9E9E9E" />
+                    <MaterialIcons name="error-outline" size={48} color="#9E9E9E"/>
                     <Text style={styles.errorText}>초대 정보를 불러올 수 없습니다.</Text>
                     <TouchableOpacity
                         style={styles.retryButton}
@@ -158,9 +155,9 @@ export default function InviteAcceptScreen() {
     return (
         <View style={styles.container}>
             {/* Header */}
-            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+            <View style={[styles.header, {paddingTop: insets.top + 16}]}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                    <MaterialIcons name="arrow-back" size={24} color="#000" />
+                    <MaterialIcons name="arrow-back" size={24} color="#000"/>
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>초대 수락</Text>
             </View>
@@ -169,7 +166,7 @@ export default function InviteAcceptScreen() {
             <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
                 <View style={styles.inviteCard}>
                     <View style={styles.iconContainer}>
-                        <MaterialIcons name="flight" size={48} color="#088CDA" />
+                        <MaterialIcons name="flight" size={48} color="#088CDA"/>
                     </View>
                     <Text style={styles.inviteTitle}>여행 초대</Text>
                     <Text style={styles.inviteDescription}>
@@ -180,23 +177,23 @@ export default function InviteAcceptScreen() {
                 <View style={styles.planInfoCard}>
                     <Text style={styles.planInfoLabel}>여행 계획</Text>
                     <Text style={styles.planInfoTitle}>{inviteInfo.title}</Text>
-                    
+
                     <View style={styles.planInfoRow}>
-                        <MaterialIcons name="location-on" size={20} color="#585858" />
+                        <MaterialIcons name="location-on" size={20} color="#585858"/>
                         <Text style={styles.planInfoText}>
                             {inviteInfo.destination.name}
                         </Text>
                     </View>
 
                     <View style={styles.planInfoRow}>
-                        <MaterialIcons name="calendar-today" size={20} color="#585858" />
+                        <MaterialIcons name="calendar-today" size={20} color="#585858"/>
                         <Text style={styles.planInfoText}>
                             {inviteInfo.startDate} ~ {inviteInfo.endDate}
                         </Text>
                     </View>
 
                     <View style={styles.planInfoRow}>
-                        <MaterialIcons name="people" size={20} color="#585858" />
+                        <MaterialIcons name="people" size={20} color="#585858"/>
                         <Text style={styles.planInfoText}>
                             참여자 {inviteInfo.participants}명
                         </Text>
@@ -212,10 +209,10 @@ export default function InviteAcceptScreen() {
                     disabled={isAccepting || !authUser}
                 >
                     {isAccepting ? (
-                        <ActivityIndicator size="small" color="#fff" />
+                        <ActivityIndicator size="small" color="#fff"/>
                     ) : (
                         <>
-                            <MaterialIcons name="check-circle" size={24} color="#fff" />
+                            <MaterialIcons name="check-circle" size={24} color="#fff"/>
                             <Text style={styles.acceptButtonText}>초대 수락</Text>
                         </>
                     )}
