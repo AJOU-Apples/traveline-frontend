@@ -1,16 +1,16 @@
-import React, {useCallback, useState} from 'react';
-import {View, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, Alert, RefreshControl} from 'react-native';
-import {Text} from 'react-native-paper';
-import {router, useFocusEffect, useLocalSearchParams} from 'expo-router';
-import {Feather} from '@expo/vector-icons';
-import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {useUser, type Accommodation} from '../src/context/UserContext';
+import React, { useCallback, useState } from 'react';
+import { View, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, Alert, RefreshControl } from 'react-native';
+import { Text } from 'react-native-paper';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useUser, type Accommodation } from '../src/context/UserContext';
 import AccommodationCard from '../components/AccommodationCard';
 
 export default function AccommodationsScreen() {
-    const {planId} = useLocalSearchParams<{ planId: string }>();
+    const { planId } = useLocalSearchParams<{ planId: string }>();
     const insets = useSafeAreaInsets();
-    const {getAccommodationsByPlan, deleteAccommodation, updateAccommodation} = useUser();
+    const { getAccommodationsByPlan, deleteAccommodation, updateAccommodation, toggleAccommodationLike } = useUser();
     const [selectedAccommodationId, setSelectedAccommodationId] = useState<string | null>(null);
     const [showActionModal, setShowActionModal] = useState(false);
     const [accommodations, setAccommodations] = useState<Accommodation[]>([]);
@@ -51,7 +51,7 @@ export default function AccommodationsScreen() {
     const handleAddAccommodation = () => {
         router.push({
             pathname: '/search-accommodation',
-            params: {planId},
+            params: { planId },
         });
     };
 
@@ -114,6 +114,26 @@ export default function AccommodationsScreen() {
         ]);
     };
 
+    const handleLikePress = async (accommodationId: string) => {
+        if (!planId) return;
+
+        try {
+            const result = await toggleAccommodationLike(planId, accommodationId);
+            // 로컬 상태 업데이트
+            setAccommodations((prev) =>
+                prev.map((acc) =>
+                    acc.id === accommodationId
+                        ? { ...acc, isLiked: result.isLiked, likes: result.likeCount, likedBy: result.likedBy }
+                        : acc
+                )
+            );
+        } catch (error) {
+            console.error('Failed to toggle accommodation like:', error);
+            const errorMessage = error instanceof Error ? error.message : '좋아요 처리에 실패했습니다.';
+            Alert.alert('오류', errorMessage);
+        }
+    };
+
     const selectedAccommodation = accommodations.find((a) => a.id === selectedAccommodationId);
     const isAccommodationSelected = selectedAccommodation?.isSelected || false;
 
@@ -122,7 +142,7 @@ export default function AccommodationsScreen() {
             {/* 상단바 */}
             <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
                 <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-                    <Feather name="arrow-left" size={24} color="#000"/>
+                    <Feather name="arrow-left" size={24} color="#000" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>숙소</Text>
             </View>
@@ -134,7 +154,7 @@ export default function AccommodationsScreen() {
             >
                 {/* 숙소 추가 버튼 */}
                 <TouchableOpacity style={styles.addButton} onPress={handleAddAccommodation}>
-                    <Feather name="plus" size={16} color="#000"/>
+                    <Feather name="plus" size={16} color="#000" />
                     <Text style={styles.addButtonText}>숙소 추가</Text>
                 </TouchableOpacity>
 
@@ -151,6 +171,7 @@ export default function AccommodationsScreen() {
                                 key={accommodation.id}
                                 accommodation={accommodation}
                                 onMorePress={() => handleMorePress(accommodation.id)}
+                                onLikePress={() => handleLikePress(accommodation.id)}
                             />
                         ))}
                     </View>

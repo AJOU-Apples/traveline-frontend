@@ -10,4 +10,5 @@ export * from './accommodation.types';
 export * from './supply.types';
 export * from './task.types';
 export * from './chat.types';
+export * from './travelPost.types';
 

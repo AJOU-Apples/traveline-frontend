@@ -22,6 +22,9 @@ export type Place = {
   photos?: Photo[];
   expenses?: Expense[];
   memos?: Memo[];
+  likes?: number; // 좋아요 개수
+  isLiked?: boolean | null; // 현재 사용자가 좋아요 했는지 (null: 로그인 안함)
+  likedBy?: number[]; // 좋아요한 멤버 ID 목록
 };
 
 export type TravelDay = {

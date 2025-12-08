@@ -102,6 +102,10 @@ class AuthApi {
     private refreshToken: string | null = null;
     private onTokenExpiredCallback: (() => void) | null = null;
 
+    // 토큰 갱신 락 (동시 갱신 방지)
+    private isRefreshing = false;
+    private refreshPromise: Promise<string> | null = null;
+
     // 토큰 만료 콜백 등록
     setOnTokenExpired(callback: (() => void) | null) {
         this.onTokenExpiredCallback = callback;
@@ -290,8 +294,29 @@ class AuthApi {
         }
     }
 
-    // 토큰 갱신
+    // 토큰 갱신 (락을 사용하여 동시 갱신 방지)
     async refreshAccessToken(): Promise<string> {
+        // 이미 갱신 중이면 기존 Promise 반환 (중복 갱신 방지)
+        if (this.isRefreshing && this.refreshPromise) {
+            console.log('Token refresh already in progress, waiting...');
+            return this.refreshPromise;
+        }
+
+        // 갱신 시작
+        this.isRefreshing = true;
+        this.refreshPromise = this._doRefreshToken();
+
+        try {
+            const result = await this.refreshPromise;
+            return result;
+        } finally {
+            this.isRefreshing = false;
+            this.refreshPromise = null;
+        }
+    }
+
+    // 실제 토큰 갱신 로직 (private)
+    private async _doRefreshToken(): Promise<string> {
         try {
             if (!this.refreshToken) {
                 throw new Error('No refresh token available');
@@ -311,6 +336,7 @@ class AuthApi {
 
             const result = await response.json();
             await this.saveTokens(result.accessToken, result.refreshToken);
+            console.log('Token refreshed successfully');
             return result.accessToken;
         } catch (error) {
             console.error('Token refresh error:', error);
@@ -361,6 +387,29 @@ class AuthApi {
         }
 
         return response;
+    }
+
+    // 선택적 인증 API 호출 (토큰이 있으면 포함, 없으면 인증 없이 요청)
+    async optionalAuthFetch(url: string, options: RequestInit = {}, isFormData: boolean = false): Promise<Response> {
+        const headers: Record<string, string> = {
+            ...options.headers as Record<string, string>,
+        };
+
+        // FormData가 아닐 때만 Content-Type을 설정
+        if (!isFormData) {
+            headers['Content-Type'] = 'application/json';
+        }
+
+        // 토큰이 있으면 인증 헤더 추가
+        if (this.accessToken) {
+            // 토큰이 있으면 유효성 체크 후 추가
+            const isTokenValid = await this.checkAndRefreshToken();
+            if (isTokenValid && this.accessToken) {
+                headers['Authorization'] = `Bearer ${this.accessToken}`;
+            }
+        }
+
+        return fetch(url, { ...options, headers });
     }
 
     // 로그인 상태 확인
