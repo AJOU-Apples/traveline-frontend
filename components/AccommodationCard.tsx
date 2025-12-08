@@ -7,14 +7,17 @@ import { Accommodation } from '../src/context/UserContext';
 type AccommodationCardProps = {
     accommodation: Accommodation;
     onMorePress?: () => void;
+    onLikePress?: () => void;
 };
 
-export default function AccommodationCard({ accommodation, onMorePress }: AccommodationCardProps) {
+export default function AccommodationCard({ accommodation, onMorePress, onLikePress }: AccommodationCardProps) {
     const formatDateRange = (checkIn: string, checkOut: string) => {
         return `${checkIn.replace(/-/g, '.')} - ${checkOut.replace(/-/g, '.')}`;
     };
 
     const isSelected = accommodation.isSelected || false;
+    const isLiked = accommodation.isLiked === true;
+    const likeCount = accommodation.likes || 0;
 
     return (
         <View style={styles.container}>
@@ -35,11 +38,23 @@ export default function AccommodationCard({ accommodation, onMorePress }: Accomm
                     </Text>
                 </View>
                 <View style={styles.footer}>
-                    <View style={styles.likes}>
-                        <Feather name="heart" size={12} color="#585858" />
+                    <TouchableOpacity
+                        style={styles.likes}
+                        onPress={onLikePress}
+                        disabled={!onLikePress}
+                        activeOpacity={onLikePress ? 0.7 : 1}
+                    >
+                        <Feather
+                            name="heart"
+                            size={12}
+                            color={isLiked ? "#ff4444" : "#585858"}
+                            fill={isLiked ? "#ff4444" : "none"}
+                        />
                         <Text style={styles.likesText}>좋아요</Text>
-                        <Text style={styles.likesCount}>{accommodation.likes || 0}</Text>
-                    </View>
+                        <Text style={[styles.likesCount, isLiked && styles.likesCountActive]}>
+                            {likeCount}
+                        </Text>
+                    </TouchableOpacity>
                     <Text style={styles.date}>
                         {formatDateRange(accommodation.checkInDate, accommodation.checkOutDate)}
                     </Text>
@@ -141,6 +156,9 @@ const styles = StyleSheet.create({
         lineHeight: 16,
         letterSpacing: -0.15,
         color: '#585858',
+    },
+    likesCountActive: {
+        color: '#ff4444',
     },
     date: {
         fontSize: 12,

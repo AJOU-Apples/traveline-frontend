@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import {Platform} from 'react-native';
 
 /**
  * 플랫폼별 백엔드 API Base URL을 반환합니다.
@@ -12,10 +12,10 @@ export const getApiBaseUrl = (): string => {
         // 개발 모드
         if (Platform.OS === 'android') {
             // return 'http://10.0.2.2:8080/api'; // Android 에뮬레이터
-            return 'https://3b95820fb1a5.ngrok-free.app/api';
+            return 'https://aae04f6d0f8e.ngrok-free.app/api';
         } else {
             // return 'http://localhost:8080/api'; // iOS 시뮬레이터
-            return 'https://3b95820fb1a5.ngrok-free.app/api';
+            return 'https://aae04f6d0f8e.ngrok-free.app/api';
         }
     } else {
         // 프로덕션 모드 - 실제 서버 URL로 변경 필요
@@ -32,10 +32,10 @@ export const getServerBaseUrl = (): string => {
         // 개발 모드
         if (Platform.OS === 'android') {
             // return 'http://10.0.2.2:8080'; // Android 에뮬레이터
-            return 'https://3b95820fb1a5.ngrok-free.app';
+            return 'https://aae04f6d0f8e.ngrok-free.app';
         } else {
             // return 'http://localhost:8080'; // iOS 시뮬레이터
-            return 'https://3b95820fb1a5.ngrok-free.app';
+            return 'https://aae04f6d0f8e.ngrok-free.app';
         }
     } else {
         // 프로덕션 모드 - 실제 서버 URL로 변경 필요

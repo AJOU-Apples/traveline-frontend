@@ -1,14 +1,65 @@
-import React, { useMemo } from 'react';
-import { View, StyleSheet, ScrollView, FlatList, Dimensions, TouchableOpacity, Alert } from 'react-native';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import { View, StyleSheet, ScrollView, FlatList, Dimensions, TouchableOpacity, Alert, Image } from 'react-native';
 import { Text, Surface, IconButton } from 'react-native-paper';
 import { Feather } from '@expo/vector-icons';
+import { useFocusEffect } from 'expo-router';
 import { useUser } from '../../src/context/UserContext';
 import TravelCard from '../../components/TravelCard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
+import { useTravelPost } from '../../src/hooks/useTravelPost';
+import type { TravelPost } from '../../src/types/travelPost.types';
+import { getFullImageUrl } from '../../src/utils/travelPlanApi';
 
 const screenWidth = Dimensions.get('window').width;
 const horizontalCardWidth = 200;
+
+// 랜딩 페이지용 여행기 카드 컴포넌트
+function TravelPostCard({
+    post,
+    demoImage,
+    onPress,
+}: {
+    post: TravelPost;
+    demoImage: string;
+    onPress: () => void;
+}) {
+    const imageUrl = post.coverImageUrl
+        ? getFullImageUrl(post.coverImageUrl)
+        : demoImage;
+
+    return (
+        <TouchableOpacity
+            style={styles.postCard}
+            onPress={onPress}
+            activeOpacity={0.8}
+        >
+            <Image
+                source={{ uri: imageUrl }}
+                style={styles.postCardImage}
+                resizeMode="cover"
+            />
+            <View style={styles.postCardContent}>
+                <Text style={styles.postCardTitle} numberOfLines={2}>
+                    {post.title}
+                </Text>
+                <Text style={styles.postCardAuthor} numberOfLines={1}>
+                    {post.author.name}
+                </Text>
+                <View style={styles.postCardStats}>
+                    <View style={styles.postCardStatItem}>
+                        <Feather name="heart" size={12} color="#ff4444" />
+                        <Text style={styles.postCardStatText}>{post.likeCount}</Text>
+                    </View>
+                    <View style={styles.postCardStatItem}>
+                        <Feather name="eye" size={12} color="#999" />
+                        <Text style={styles.postCardStatText}>{post.viewCount}</Text>
+                    </View>
+                </View>
+            </View>
+        </TouchableOpacity>
+    );
+}
 
 const ddays = (iso: string) => {
     const now = new Date();
@@ -17,8 +68,69 @@ const ddays = (iso: string) => {
     return diff;
 };
 
+// 데모 이미지 URL들
+const DEMO_IMAGES = [
+    'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?w=400', // 일본 도쿄
+    'https://images.unsplash.com/photo-1499856871958-5b9627545d1a?w=400', // 파리
+    'https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=400', // 방콕
+    'https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?w=400', // 시드니
+    'https://images.unsplash.com/photo-1534430480872-3498386e7856?w=400', // 런던
+    'https://images.unsplash.com/photo-1552832230-c0197dd311b5?w=400', // 로마
+];
+
 export default function LandingPage() {
-    const { username, isAuthenticated, popularTrips, recentTrips, travelPlans } = useUser();
+    const { username, isAuthenticated, travelPlans } = useUser();
+    const { getTravelPosts } = useTravelPost();
+
+    // 여행기 데이터 상태
+    const [popularPosts, setPopularPosts] = useState<TravelPost[]>([]);
+    const [recentPosts, setRecentPosts] = useState<TravelPost[]>([]);
+    const [isLoadingPosts, setIsLoadingPosts] = useState(true);
+
+    // 여행기 데이터 로드 함수
+    const loadTravelPosts = useCallback(async () => {
+        setIsLoadingPosts(true);
+        try {
+            // 인기순 여행기 (좋아요 높은 순)
+            const popularResponse = await getTravelPosts({
+                page: 0,
+                size: 5,
+                visibility: 'PUBLIC',
+                sort: 'likeCount',
+            });
+            // 숨김 처리된 여행기 필터링
+            setPopularPosts(popularResponse.content.filter((post) => !post.isHidden));
+
+            // 최신순 여행기
+            const recentResponse = await getTravelPosts({
+                page: 0,
+                size: 5,
+                visibility: 'PUBLIC',
+                sort: 'createdAt',
+            });
+            // 숨김 처리된 여행기 필터링
+            setRecentPosts(recentResponse.content.filter((post) => !post.isHidden));
+        } catch (error) {
+            console.error('Failed to load travel posts:', error);
+        } finally {
+            setIsLoadingPosts(false);
+        }
+    }, [getTravelPosts]);
+
+    // 화면 포커스될 때마다 데이터 새로고침
+    useFocusEffect(
+        useCallback(() => {
+            loadTravelPosts();
+        }, [loadTravelPosts])
+    );
+
+    // 여행기 카드 클릭 핸들러
+    const handlePostPress = useCallback((postId: number) => {
+        router.push({
+            pathname: '/travel-post-detail',
+            params: { id: postId.toString() }
+        });
+    }, []);
 
     // 새 일정 추가 핸들러
     const handleNewSchedule = () => {
@@ -135,29 +247,57 @@ export default function LandingPage() {
                         <Text style={styles.highlightSub}>모두가 주목한 인기 여행이에요.</Text>
                     </View>
 
-                    {/* Popular Trips - 인기 여행 */}
+                    {/* Popular Trips - 인기 여행기 */}
                     <View style={styles.horizontalScrollSection}>
-                        <FlatList
-                            horizontal
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.cardList}
-                            data={popularTrips}
-                            renderItem={({ item }) => <TravelCard trip={item} width={horizontalCardWidth} />}
-                            keyExtractor={(item) => item.id}
-                        />
+                        {popularPosts.length > 0 ? (
+                            <FlatList
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={styles.cardList}
+                                data={popularPosts}
+                                renderItem={({ item, index }) => (
+                                    <TravelPostCard
+                                        post={item}
+                                        demoImage={DEMO_IMAGES[index % DEMO_IMAGES.length]}
+                                        onPress={() => handlePostPress(item.id)}
+                                    />
+                                )}
+                                keyExtractor={(item) => item.id.toString()}
+                            />
+                        ) : (
+                            <View style={styles.emptyPostsContainer}>
+                                <Text style={styles.emptyPostsText}>
+                                    {isLoadingPosts ? '여행기를 불러오는 중...' : '아직 등록된 여행기가 없습니다.'}
+                                </Text>
+                            </View>
+                        )}
                     </View>
 
                     {/* Latest section - 최신 여행기 */}
                     <Text style={styles.sectionTitle}>최신 여행기</Text>
                     <View style={styles.horizontalScrollSection}>
-                        <FlatList
-                            horizontal
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.cardList}
-                            data={recentTrips}
-                            renderItem={({ item }) => <TravelCard trip={item} width={horizontalCardWidth} />}
-                            keyExtractor={(item) => item.id}
-                        />
+                        {recentPosts.length > 0 ? (
+                            <FlatList
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={styles.cardList}
+                                data={recentPosts}
+                                renderItem={({ item, index }) => (
+                                    <TravelPostCard
+                                        post={item}
+                                        demoImage={DEMO_IMAGES[(index + 3) % DEMO_IMAGES.length]}
+                                        onPress={() => handlePostPress(item.id)}
+                                    />
+                                )}
+                                keyExtractor={(item) => item.id.toString()}
+                            />
+                        ) : (
+                            <View style={styles.emptyPostsContainer}>
+                                <Text style={styles.emptyPostsText}>
+                                    {isLoadingPosts ? '여행기를 불러오는 중...' : '아직 등록된 여행기가 없습니다.'}
+                                </Text>
+                            </View>
+                        )}
                     </View>
                 </Surface>
             </ScrollView>
@@ -302,5 +442,59 @@ const styles = StyleSheet.create({
         fontWeight: '500',
         letterSpacing: -0.2,
         lineHeight: 20
-    }
+    },
+    // 여행기 카드 스타일
+    postCard: {
+        width: horizontalCardWidth,
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    postCardImage: {
+        width: '100%',
+        height: 120,
+        backgroundColor: '#f0f0f0',
+    },
+    postCardContent: {
+        padding: 12,
+    },
+    postCardTitle: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#000',
+        marginBottom: 4,
+        lineHeight: 18,
+    },
+    postCardAuthor: {
+        fontSize: 12,
+        color: '#666',
+        marginBottom: 8,
+    },
+    postCardStats: {
+        flexDirection: 'row',
+        gap: 12,
+    },
+    postCardStatItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    postCardStatText: {
+        fontSize: 11,
+        color: '#999',
+    },
+    emptyPostsContainer: {
+        paddingVertical: 40,
+        alignItems: 'center',
+        width: '100%',
+    },
+    emptyPostsText: {
+        fontSize: 14,
+        color: '#999',
+    },
 });

@@ -1,7 +1,7 @@
-import {travelPlanApi} from '../utils/travelPlanApi';
-import type {Photo} from '../types/photo.types';
-import type {TravelPlan} from '../types/travelPlan.types';
-import type {AuthUser} from '../types/user.types';
+import { travelPlanApi } from '../utils/travelPlanApi';
+import type { Photo } from '../types/photo.types';
+import type { TravelPlan } from '../types/travelPlan.types';
+import type { AuthUser } from '../types/user.types';
 
 export const usePhoto = (
     authUser: AuthUser | null,

@@ -27,6 +27,7 @@ import type {
     TravelPlanInvitation,
 } from '../types';
 import type { FlightSearchRequest, FlightSearchResponse } from '../utils/travelPlanApi';
+import { travelPlanApi } from '../utils/travelPlanApi';
 
 export type {
     Trip,
@@ -142,6 +143,10 @@ type UserContextValue = {
     rejectInvitation: (memberId: string) => Promise<Member>;
     updateMemberRole: (memberId: string, role: MemberRole) => Promise<Member>;
     removeMember: (memberId: string) => Promise<void>;
+    // Like methods
+    togglePlaceLike: (planId: string, placeId: string) => Promise<{ isLiked: boolean; likeCount: number; likedBy: number[] }>;
+    toggleFlightLike: (planId: string, flightId: string) => Promise<{ isLiked: boolean; likeCount: number; likedBy: number[] }>;
+    toggleAccommodationLike: (planId: string, accommodationId: string) => Promise<{ isLiked: boolean; likeCount: number; likedBy: number[] }>;
 };
 
 const defaultTrips: Trip[] = [
@@ -322,6 +327,16 @@ export const UserProvider = ({ children }: PropsWithChildren) => {
         rejectInvitation,
         updateMemberRole,
         removeMember,
+        // Like methods
+        togglePlaceLike: async (planId: string, placeId: string) => {
+            return await travelPlanApi.togglePlaceLike(planId, placeId);
+        },
+        toggleFlightLike: async (planId: string, flightId: string) => {
+            return await travelPlanApi.toggleFlightLike(planId, flightId);
+        },
+        toggleAccommodationLike: async (planId: string, accommodationId: string) => {
+            return await travelPlanApi.toggleAccommodationLike(planId, accommodationId);
+        },
     };
 
     return <UserContext.Provider value={value}>{children}</UserContext.Provider>;

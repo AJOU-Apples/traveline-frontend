@@ -34,6 +34,9 @@ export interface PlaceDto {
     createdAt?: string;
     updatedAt?: string;
     createdBy?: number;
+    likes?: number; // 좋아요 개수
+    isLiked?: boolean | null; // 현재 사용자가 좋아요 했는지 (null: 로그인 안함)
+    likedBy?: number[]; // 좋아요한 멤버 ID 목록
 }
 
 export interface PhotoDto {
@@ -129,6 +132,57 @@ export interface MemoDto {
     visibility: 'PERSONAL' | 'SHARED'; // 공개 설정
     createdAt: string;
     updatedAt: string;
+}
+
+// ============ Full DTO (전체 데이터 조회용) ============
+export interface PlaceFullDto extends PlaceDto {
+    photos?: PhotoDto[];
+    expenses?: ExpenseDto[];
+    memos?: MemoDto[];
+}
+
+export interface TravelDayFullDto {
+    id: number;
+    travelPlanId: number;
+    dayNumber: number;
+    date: string;
+    displayDate: string;
+    places: PlaceFullDto[];
+}
+
+export interface MemberDto {
+    id: number;
+    travelPlanId: number;
+    userId: string;
+    username: string;
+    role: 'OWNER' | 'EDITOR' | 'VIEWER';
+    status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+    invitedAt: string;
+    acceptedAt?: string;
+}
+
+export interface DestinationDto {
+    id: number;
+    name: string;
+    isInternational?: boolean;
+    latitude?: number;
+    longitude?: number;
+    currency?: string;
+}
+
+export interface TravelPlanFullDto {
+    id: number;
+    title: string;
+    destination: DestinationDto;
+    destinationId?: number;
+    startDate: string;
+    endDate: string;
+    days: TravelDayFullDto[];
+    members?: MemberDto[];
+    flights?: FlightDto[];
+    accommodations?: AccommodationDto[];
+    createdAt?: string;
+    updatedAt?: string;
 }
 
 export interface CreateExpenseRequest {
@@ -610,6 +664,96 @@ class TravelPlanApi {
             return await response.json();
         } catch (error) {
             console.error('Get travel plan error:', error);
+            throw error;
+        }
+    }
+
+    // 여행 계획 전체 데이터 조회 (사진, 지출, 메모, 항공권, 숙소 포함)
+    // PUBLIC 여행기에서 호출 시 인증 없이도 조회 가능 (travelPostId 필요)
+    async getTravelPlanFull(
+        planId: number,
+        options?: {
+            includePhotos?: boolean;
+            includeExpenses?: boolean;
+            includeMemos?: boolean;
+            includeFlights?: boolean;
+            includeAccommodations?: boolean;
+            travelPostId?: number; // 게스트 모드에서 여행기 조회 시 필요
+        }
+    ): Promise<TravelPlanFullDto> {
+        try {
+            const queryParams = new URLSearchParams();
+            if (options?.includePhotos !== undefined) {
+                queryParams.append('includePhotos', options.includePhotos.toString());
+            }
+            if (options?.includeExpenses !== undefined) {
+                queryParams.append('includeExpenses', options.includeExpenses.toString());
+            }
+            if (options?.includeMemos !== undefined) {
+                queryParams.append('includeMemos', options.includeMemos.toString());
+            }
+            if (options?.includeFlights !== undefined) {
+                queryParams.append('includeFlights', options.includeFlights.toString());
+            }
+            if (options?.includeAccommodations !== undefined) {
+                queryParams.append('includeAccommodations', options.includeAccommodations.toString());
+            }
+            // 게스트 모드에서 여행기 조회 시 travelPostId 추가
+            if (options?.travelPostId !== undefined) {
+                queryParams.append('travelPostId', options.travelPostId.toString());
+            }
+
+            const queryString = queryParams.toString();
+            const url = `${API_BASE_URL}/travel-plans/${planId}/full${queryString ? `?${queryString}` : ''}`;
+
+            // PUBLIC 여행기에서 호출될 수 있으므로 선택적 인증 사용
+            const response = await authApi.optionalAuthFetch(url, {
+                method: 'GET',
+            });
+
+            if (!response.ok) {
+                if (response.status === 403) {
+                    throw new Error('이 여행 계획에 접근할 권한이 없습니다.');
+                }
+                throw new Error('여행 계획 전체 데이터를 가져오는데 실패했습니다.');
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('Get travel plan full error:', error);
+            throw error;
+        }
+    }
+
+    // 여행기에서 여행 계획 복사
+    async copyFromTravelPost(
+        travelPostId: number,
+        startDate: string,
+        title?: string
+    ): Promise<TravelPlanDto> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/copy-from-post/${travelPostId}`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({ startDate, title }),
+                }
+            );
+
+            if (!response.ok) {
+                if (response.status === 403) {
+                    throw new Error('이 여행기의 일정을 복사할 권한이 없습니다.');
+                }
+                if (response.status === 404) {
+                    throw new Error('여행기를 찾을 수 없습니다.');
+                }
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.message || '여행 계획 복사에 실패했습니다.');
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('Copy travel plan from post error:', error);
             throw error;
         }
     }
@@ -2197,6 +2341,92 @@ class TravelPlanApi {
             }
         } catch (error) {
             console.error('Revoke invite code error:', error);
+            throw error;
+        }
+    }
+
+    // ============ 좋아요 ============
+
+    // Place 좋아요 토글
+    async togglePlaceLike(planId: string, placeId: string): Promise<{ isLiked: boolean; likeCount: number; likedBy: number[] }> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${planId}/places/${placeId}/like`,
+                {
+                    method: 'POST',
+                }
+            );
+
+            if (!response.ok) {
+                if (response.status === 403) {
+                    throw new Error('이 여행 계획의 멤버만 좋아요를 누를 수 있습니다.');
+                }
+                if (response.status === 404) {
+                    throw new Error('장소를 찾을 수 없습니다.');
+                }
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.message || '좋아요 처리에 실패했습니다.');
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('Toggle place like error:', error);
+            throw error;
+        }
+    }
+
+    // Flight 좋아요 토글
+    async toggleFlightLike(planId: string, flightId: string): Promise<{ isLiked: boolean; likeCount: number; likedBy: number[] }> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${planId}/flights/${flightId}/like`,
+                {
+                    method: 'POST',
+                }
+            );
+
+            if (!response.ok) {
+                if (response.status === 403) {
+                    throw new Error('이 여행 계획의 멤버만 좋아요를 누를 수 있습니다.');
+                }
+                if (response.status === 404) {
+                    throw new Error('항공편을 찾을 수 없습니다.');
+                }
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.message || '좋아요 처리에 실패했습니다.');
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('Toggle flight like error:', error);
+            throw error;
+        }
+    }
+
+    // Accommodation 좋아요 토글
+    async toggleAccommodationLike(planId: string, accommodationId: string): Promise<{ isLiked: boolean; likeCount: number; likedBy: number[] }> {
+        try {
+            const response = await authApi.authenticatedFetch(
+                `${API_BASE_URL}/travel-plans/${planId}/accommodations/${accommodationId}/like`,
+                {
+                    method: 'POST',
+                }
+            );
+
+            if (!response.ok) {
+                if (response.status === 403) {
+                    throw new Error('이 여행 계획의 멤버만 좋아요를 누를 수 있습니다.');
+                }
+                if (response.status === 404) {
+                    throw new Error('숙소를 찾을 수 없습니다.');
+                }
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.message || '좋아요 처리에 실패했습니다.');
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('Toggle accommodation like error:', error);
             throw error;
         }
     }

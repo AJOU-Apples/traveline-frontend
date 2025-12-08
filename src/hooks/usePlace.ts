@@ -94,6 +94,9 @@ export const usePlace = (
         visitedAt: place.visitedAt,
         photos: [],
         expenses: [],
+        likes: place.likes,
+        isLiked: place.isLiked,
+        likedBy: place.likedBy,
       }));
 
       // travelPlans 상태 업데이트 - 해당 day의 places를 업데이트

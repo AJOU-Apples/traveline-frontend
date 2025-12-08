@@ -7,11 +7,13 @@ import { Flight } from '../src/context/UserContext';
 type FlightCardProps = {
     flight: Flight;
     onMorePress?: () => void;
+    onLikePress?: () => void;
 };
 
-export default function FlightCard({ flight, onMorePress }: FlightCardProps) {
+export default function FlightCard({ flight, onMorePress, onLikePress }: FlightCardProps) {
     const fullFlightNumber = `${flight.airline}${flight.flightNumber}`;
     const isSelected = flight.isSelected || false;
+    const isLiked = flight.isLiked === true;
     const parseDateTime = (value?: string) => {
         if (!value) {
             return { date: undefined as string | undefined, time: undefined as string | undefined };
@@ -80,6 +82,7 @@ export default function FlightCard({ flight, onMorePress }: FlightCardProps) {
             arrivalTime: arrivalTimeDisplay,
             duration: computedDuration,
             likes: flight.likes ?? 0,
+            isLiked,
         };
     })();
 
@@ -105,11 +108,23 @@ export default function FlightCard({ flight, onMorePress }: FlightCardProps) {
                     </Text>
                 </View>
                 <View style={styles.footer}>
-                    <View style={styles.likes}>
-                        <Feather name="heart" size={12} color="#585858" />
+                    <TouchableOpacity
+                        style={styles.likes}
+                        onPress={onLikePress}
+                        disabled={!onLikePress}
+                        activeOpacity={onLikePress ? 0.7 : 1}
+                    >
+                        <Feather
+                            name="heart"
+                            size={12}
+                            color={formatted.isLiked ? "#ff4444" : "#585858"}
+                            fill={formatted.isLiked ? "#ff4444" : "none"}
+                        />
                         <Text style={styles.likesText}>좋아요</Text>
-                        <Text style={styles.likesCount}>{formatted.likes}</Text>
-                    </View>
+                        <Text style={[styles.likesCount, formatted.isLiked && styles.likesCountActive]}>
+                            {formatted.likes}
+                        </Text>
+                    </TouchableOpacity>
                     {formatted.departureDate ? (
                         <Text style={styles.date}>
                             출발일 {formatted.departureDate.replace(/-/g, '.')}
@@ -218,6 +233,9 @@ const styles = StyleSheet.create({
         lineHeight: 16,
         letterSpacing: -0.15,
         color: '#585858',
+    },
+    likesCountActive: {
+        color: '#ff4444',
     },
     date: {
         fontSize: 12,

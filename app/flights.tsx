@@ -10,7 +10,7 @@ import FlightCard from '../components/FlightCard';
 export default function FlightsScreen() {
     const { planId } = useLocalSearchParams<{ planId: string }>();
     const insets = useSafeAreaInsets();
-    const { getFlightsByPlan, deleteFlight, updateFlight } = useUser();
+    const { getFlightsByPlan, deleteFlight, updateFlight, toggleFlightLike } = useUser();
     const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
     const [showActionModal, setShowActionModal] = useState(false);
     const [flights, setFlights] = useState<Flight[]>([]);
@@ -141,6 +141,26 @@ export default function FlightsScreen() {
         ]);
     };
 
+    const handleLikePress = async (flightId: string) => {
+        if (!planId) return;
+
+        try {
+            const result = await toggleFlightLike(planId, flightId);
+            // 로컬 상태 업데이트
+            setFlights((prev) =>
+                prev.map((flight) =>
+                    flight.id === flightId
+                        ? { ...flight, isLiked: result.isLiked, likes: result.likeCount, likedBy: result.likedBy }
+                        : flight
+                )
+            );
+        } catch (error) {
+            console.error('Failed to toggle flight like:', error);
+            const errorMessage = error instanceof Error ? error.message : '좋아요 처리에 실패했습니다.';
+            Alert.alert('오류', errorMessage);
+        }
+    };
+
     const selectedFlight = flights.find((f) => f.id === selectedFlightId);
     const isFlightSelected = selectedFlight?.isSelected || false;
 
@@ -178,6 +198,7 @@ export default function FlightsScreen() {
                                 key={flight.id}
                                 flight={flight}
                                 onMorePress={() => handleMorePress(flight.id)}
+                                onLikePress={() => handleLikePress(flight.id)}
                             />
                         ))}
                     </View>
