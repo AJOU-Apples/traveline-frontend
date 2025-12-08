@@ -1,0 +1,2121 @@
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import {
+    View,
+    StyleSheet,
+    TouchableOpacity,
+    ScrollView,
+    Platform,
+    Dimensions,
+    Animated,
+    PanResponder,
+    type ViewStyle,
+    Modal,
+    Pressable,
+    Alert,
+} from 'react-native';
+import { Text } from 'react-native-paper';
+import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { Feather, MaterialIcons } from '@expo/vector-icons';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import Constants from 'expo-constants';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useUser } from '../src/context/UserContext';
+import DraggableFlatList, { ScaleDecorator, RenderItemParams } from 'react-native-draggable-flatlist';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import type { Place, Flight, Accommodation } from '../src/context/UserContext';
+import { useTravelPlanWebSocket } from '../src/hooks/useTravelPlanWebSocket';
+import type { TravelPlanEvent } from '../src/types/webSocket.types';
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+const MIN_MAP_HEIGHT = 0;
+const MAX_MAP_HEIGHT = SCREEN_HEIGHT * 0.5;
+const INITIAL_MAP_HEIGHT = 180;
+
+// Haversine formula를 사용한 두 좌표 간 거리 계산 (km 단위)
+function calculateDistance(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number
+): number {
+    const R = 6371; // 지구 반지름 (km)
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distance = R * c;
+    return distance;
+}
+
+// Google Directions API에서 반환된 polyline 디코딩
+function decodePolyline(encoded: string): { latitude: number; longitude: number }[] {
+    const poly: { latitude: number; longitude: number }[] = [];
+    let index = 0;
+    const len = encoded.length;
+    let lat = 0;
+    let lng = 0;
+
+    while (index < len) {
+        let b;
+        let shift = 0;
+        let result = 0;
+        do {
+            b = encoded.charCodeAt(index++) - 63;
+            result |= (b & 0x1f) << shift;
+            shift += 5;
+        } while (b >= 0x20);
+        const dlat = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+        lat += dlat;
+
+        shift = 0;
+        result = 0;
+        do {
+            b = encoded.charCodeAt(index++) - 63;
+            result |= (b & 0x1f) << shift;
+            shift += 5;
+        } while (b >= 0x20);
+        const dlng = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+        lng += dlng;
+
+        poly.push({
+            latitude: lat / 1e5,
+            longitude: lng / 1e5,
+        });
+    }
+
+    return poly;
+}
+
+// Google Directions API를 사용하여 두 지점 간 경로 가져오기
+async function fetchRoute(
+    origin: { latitude: number; longitude: number },
+    destination: { latitude: number; longitude: number },
+    apiKey: string
+): Promise<{ latitude: number; longitude: number }[]> {
+    try {
+        const originStr = `${origin.latitude},${origin.longitude}`;
+        const destStr = `${destination.latitude},${destination.longitude}`;
+
+        // 두 지점 간 거리 계산 (km)
+        const distance = calculateDistance(
+            origin.latitude,
+            origin.longitude,
+            destination.latitude,
+            destination.longitude
+        );
+
+        // 거리에 따라 이동 수단 자동 선택
+        // 2km 이하: 도보, 초과: 대중교통
+        const mode = distance <= 2 ? 'walking' : 'transit';
+
+        const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&mode=${mode}&key=${apiKey}`;
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.status === 'OK' && data.routes.length > 0) {
+            const points = data.routes[0].overview_polyline.points;
+            return decodePolyline(points);
+        }
+
+        if (data.routes.length === 0) {
+            const walkingUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${originStr}&destination=${destStr}&mode=walking&key=${apiKey}`;
+            const walkingResponse = await fetch(walkingUrl);
+            const walkingData = await walkingResponse.json();
+            if (walkingData.status === 'OK' && walkingData.routes.length > 0) {
+                const walkingPoints = walkingData.routes[0].overview_polyline.points;
+                return decodePolyline(walkingPoints);
+            }
+        }
+
+        // API 호출 실패 시 직선 반환
+        return [origin, destination];
+    } catch (error) {
+        console.error('Route fetch error:', error);
+        // 에러 발생 시 직선 반환
+        return [origin, destination];
+    }
+}
+
+// Google Maps API 키 (app.json에서 가져오기)
+const GOOGLE_MAPS_API_KEY = Platform.select({
+    ios: Constants.expoConfig?.ios?.config?.googleMapsApiKey,
+    android: Constants.expoConfig?.android?.config?.googleMaps?.apiKey,
+}) || '';
+
+export default function PlanDetailScreen() {
+    const { planId } = useLocalSearchParams<{ planId: string }>();
+    const insets = useSafeAreaInsets();
+    const {
+        getTravelPlan,
+        reorderPlaces,
+        getPlacesByDay,
+        getExpensesByPlace,
+        getFlightsByPlan,
+        getAccommodationsByPlan,
+        loadTravelPlans,
+        togglePlaceLike,
+        travelPlans
+    } = useUser();
+    const [selectedDay, setSelectedDay] = useState(1);
+    const [isEditMode, setIsEditMode] = useState(false);
+    const [isLoadingPlaces, setIsLoadingPlaces] = useState(false);
+    const [flights, setFlights] = useState<Flight[]>([]);
+    const [accommodations, setAccommodations] = useState<Accommodation[]>([]);
+    const [showSidePanel, setShowSidePanel] = useState(false);
+
+    // 편집 모드에서 사용할 로컬 places 상태 (편집 중인 순서를 임시 저장)
+    const [editedPlaces, setEditedPlaces] = useState<Place[] | null>(null);
+
+    // 중복 로딩 방지를 위한 ref
+    const isLoadingPlacesRef = useRef(false);
+
+    // 저장된 여행 데이터 불러오기 (travelPlans 변경 시 자동 업데이트)
+    const tripData = useMemo(() => {
+        return getTravelPlan(planId || '');
+    }, [planId, travelPlans, getTravelPlan]);
+
+    // 여행이 끝났는지 확인
+    const isTravelCompleted = useMemo(() => {
+        if (!tripData) return false;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const endDate = new Date(tripData.endDate.replace(/\./g, '-'));
+        return endDate < today;
+    }, [tripData]);
+
+    // 항공편/숙소 데이터 로드
+    const loadFlightsAndAccommodations = useCallback(async () => {
+        if (!planId) {
+            return;
+        }
+
+        try {
+            const [fetchedFlights, fetchedAccommodations] = await Promise.all([
+                getFlightsByPlan(planId),
+                getAccommodationsByPlan(planId),
+            ]);
+
+            setFlights(fetchedFlights);
+            setAccommodations(fetchedAccommodations);
+        } catch (error) {
+            console.error('Failed to load flights/accommodations:', error);
+        }
+    }, [planId, getFlightsByPlan, getAccommodationsByPlan]);
+
+    useFocusEffect(
+        useCallback(() => {
+            loadFlightsAndAccommodations();
+        }, [loadFlightsAndAccommodations])
+    );
+
+    // Places 로드 함수
+    const loadPlaces = useCallback(async () => {
+        if (!planId || isLoadingPlacesRef.current) return;
+
+        isLoadingPlacesRef.current = true;
+        setIsLoadingPlaces(true);
+
+        try {
+            await getPlacesByDay(planId, selectedDay);
+
+            // 각 place의 expenses 로드
+            const currentDayData = getTravelPlan(planId)?.days.find(day => day.dayNumber === selectedDay);
+            if (currentDayData?.places) {
+                await Promise.all(
+                    currentDayData.places.map(place =>
+                        getExpensesByPlace(place.id).catch(err => {
+                            console.error(`Failed to load expenses for place ${place.id}:`, err);
+                            return [];
+                        })
+                    )
+                );
+            }
+
+            // 편집 모드가 아니면 편집용 상태 초기화
+            if (!isEditMode) {
+                setEditedPlaces(null);
+            }
+        } catch (error) {
+            console.error('Failed to load places:', error);
+        } finally {
+            setIsLoadingPlaces(false);
+            isLoadingPlacesRef.current = false;
+        }
+    }, [planId, selectedDay, getPlacesByDay, getExpensesByPlace, getTravelPlan, isEditMode]);
+
+    // Place 좋아요 핸들러
+    const handlePlaceLikePress = useCallback(async (placeId: string) => {
+        if (!planId) return;
+
+        try {
+            await togglePlaceLike(planId, placeId);
+            // 서버에서 최신 데이터를 가져와서 상태 업데이트
+            // WebSocket 이벤트도 자동으로 업데이트를 처리하지만, 즉시 반영을 위해 여기서도 호출
+            await getPlacesByDay(planId, selectedDay);
+        } catch (error) {
+            console.error('Failed to toggle place like:', error);
+            const errorMessage = error instanceof Error ? error.message : '좋아요 처리에 실패했습니다.';
+            Alert.alert('오류', errorMessage);
+        }
+    }, [planId, selectedDay, togglePlaceLike, getPlacesByDay]);
+
+    // WebSocket 이벤트 처리
+    const handleWebSocketEvent = useCallback((event: TravelPlanEvent) => {
+        // planId 비교 (문자열/숫자 모두 처리)
+        // planId가 없으면 현재 planId 사용 (WebSocket은 특정 planId에 연결되므로)
+        const eventPlanId = typeof event.planId === 'number' ? event.planId.toString() : (event.planId || planId);
+        if (!planId || !eventPlanId || eventPlanId !== planId) {
+            console.log('WebSocket event ignored - planId mismatch:', { eventPlanId, currentPlanId: planId });
+            return;
+        }
+
+        console.log('WebSocket event received:', event);
+
+        switch (event.entityType) {
+            case 'PLACE':
+                // Place 좋아요 이벤트
+                if (event.eventType === 'LIKE_CHANGED' || event.type === 'PLACE_LIKE_CHANGED') {
+                    if (planId && event.data?.placeId) {
+                        const targetDayNumber = event.data?.dayNumber && typeof event.data.dayNumber === 'number'
+                            ? event.data.dayNumber
+                            : selectedDay;
+                        // 해당 day의 places 다시 로드 (좋아요 정보 업데이트)
+                        getPlacesByDay(planId, targetDayNumber)
+                            .catch(err => {
+                                console.error('Failed to reload places after LIKE_CHANGED event:', err);
+                            });
+                    }
+                    break;
+                }
+                // Place 이벤트: ADDED, UPDATED, DELETED, REORDERED
+                if (event.eventType && ['ADDED', 'UPDATED', 'DELETED', 'REORDERED'].includes(event.eventType)) {
+                    // DELETED 이벤트인 경우 expenses 로드 없이 places만 로드
+                    if (event.eventType === 'DELETED') {
+                        const targetDayNumber = event.data?.dayNumber && typeof event.data.dayNumber === 'number'
+                            ? event.data.dayNumber
+                            : selectedDay;
+
+                        // Places만 다시 로드 (expenses는 로드하지 않음)
+                        getPlacesByDay(planId, targetDayNumber)
+                            .then(() => {
+                                // 편집 모드가 아니면 편집 상태 초기화
+                                if (!isEditMode) {
+                                    setEditedPlaces(null);
+                                }
+                            })
+                            .catch(err => {
+                                console.error('Failed to reload places after DELETE event:', err);
+                            });
+                    } else {
+                        // ADDED, UPDATED, REORDERED: places와 expenses 모두 다시 로드
+                        if (event.data?.dayNumber && typeof event.data.dayNumber === 'number') {
+                            // 특정 day의 이벤트인 경우 해당 day만 로드
+                            getPlacesByDay(planId, event.data.dayNumber)
+                                .then(() => {
+                                    // places 로드 후 expenses 로드
+                                    const currentTripData = getTravelPlan(planId);
+                                    const currentDayData = currentTripData?.days.find(day => day.dayNumber === event.data.dayNumber);
+                                    if (currentDayData?.places) {
+                                        return Promise.all(
+                                            currentDayData.places.map(place =>
+                                                getExpensesByPlace(place.id).catch(err => {
+                                                    // 에러는 무시 (이미 로드된 상태일 수 있음)
+                                                    return [];
+                                                })
+                                            )
+                                        );
+                                    }
+                                })
+                                .catch(err => {
+                                    console.error('Failed to reload places after WebSocket event:', err);
+                                });
+                        } else {
+                            // day 정보가 없으면 현재 선택된 day 로드 (expenses 포함)
+                            loadPlaces();
+                        }
+                    }
+                }
+                break;
+
+            case 'EXPENSE':
+                // Expense 이벤트: ADDED, UPDATED, DELETED
+                if (event.eventType && ['ADDED', 'UPDATED', 'DELETED'].includes(event.eventType)) {
+                    // 현재 선택된 day의 places의 expenses 다시 로드
+                    if (planId) {
+                        const currentTripData = getTravelPlan(planId);
+                        const currentDayData = currentTripData?.days.find(day => day.dayNumber === selectedDay);
+                        if (currentDayData?.places) {
+                            Promise.all(
+                                currentDayData.places.map(place =>
+                                    getExpensesByPlace(place.id).catch(err => {
+                                        console.error(`Failed to reload expenses for place ${place.id}:`, err);
+                                        return [];
+                                    })
+                                )
+                            ).catch(err => {
+                                console.error('Failed to reload expenses after WebSocket event:', err);
+                            });
+                        }
+                    }
+                }
+                break;
+
+            case 'PHOTO':
+                // Photo 이벤트: ADDED
+                if (event.eventType === 'ADDED') {
+                    // Photo가 추가되면 해당 place의 데이터를 다시 로드
+                    if (planId && event.data?.placeId) {
+                        const targetDayNumber = event.data?.dayNumber && typeof event.data.dayNumber === 'number'
+                            ? event.data.dayNumber
+                            : selectedDay;
+
+                        // 해당 day의 places 다시 로드 (photos 정보 업데이트)
+                        getPlacesByDay(planId, targetDayNumber)
+                            .catch(err => {
+                                console.error('Failed to reload places after PHOTO_ADDED event:', err);
+                            });
+                    }
+                }
+                break;
+
+            case 'FLIGHT':
+                // Flight 좋아요 이벤트
+                if (event.eventType === 'LIKE_CHANGED' || event.type === 'FLIGHT_LIKE_CHANGED') {
+                    loadFlightsAndAccommodations();
+                    break;
+                }
+                // Flight 이벤트: UPDATED
+                if (event.eventType === 'UPDATED') {
+                    loadFlightsAndAccommodations();
+                }
+                break;
+
+            case 'ACCOMMODATION':
+                // Accommodation 좋아요 이벤트
+                if (event.eventType === 'LIKE_CHANGED' || event.type === 'ACCOMMODATION_LIKE_CHANGED') {
+                    loadFlightsAndAccommodations();
+                    break;
+                }
+                // Accommodation 이벤트: UPDATED
+                if (event.eventType === 'UPDATED') {
+                    loadFlightsAndAccommodations();
+                }
+                break;
+
+            case 'MEMO':
+                // Memo 이벤트: ADDED, UPDATED, DELETED
+                if (event.eventType && ['ADDED', 'UPDATED', 'DELETED'].includes(event.eventType)) {
+                    // Memo가 변경되면 해당 place의 데이터를 다시 로드
+                    if (planId && event.data?.placeId) {
+                        const targetDayNumber = event.data?.dayNumber && typeof event.data.dayNumber === 'number'
+                            ? event.data.dayNumber
+                            : selectedDay;
+
+                        // 해당 day의 places 다시 로드 (memos 정보 업데이트)
+                        getPlacesByDay(planId, targetDayNumber)
+                            .catch(err => {
+                                console.error('Failed to reload places after MEMO event:', err);
+                            });
+                    }
+                }
+                break;
+
+            case 'MEMBER':
+                // Member 이벤트: JOINED, LEFT
+                if (event.eventType && ['JOINED', 'LEFT'].includes(event.eventType)) {
+                    // Travel plan 정보 다시 로드 (participants 정보 업데이트)
+                    loadTravelPlans().catch(err => {
+                        console.error('Failed to reload travel plan after member event:', err);
+                    });
+                }
+                break;
+
+            default:
+                console.log('Unhandled WebSocket event type:', event.entityType);
+        }
+    }, [planId, selectedDay, isEditMode, getTravelPlan, getPlacesByDay, getExpensesByPlace, loadPlaces, loadFlightsAndAccommodations, loadTravelPlans]);
+
+    // WebSocket 연결 및 이벤트 핸들링
+    useTravelPlanWebSocket({
+        planId: planId || undefined,
+        onEvent: handleWebSocketEvent,
+        enabled: !!planId,
+    });
+
+    const selectedFlights = useMemo(() => flights.filter((flight) => flight.isSelected), [flights]);
+    const selectedAccommodations = useMemo(
+        () => accommodations.filter((accommodation) => accommodation.isSelected),
+        [accommodations]
+    );
+
+    // 목적지에 따른 통화 기호 반환
+    const getCurrencySymbol = () => {
+        const destination = tripData?.destination || '';
+
+        if (destination.includes('일본') || destination.includes('도쿄') || destination.includes('오사카') || destination.includes('교토') || destination.includes('후쿠오카') || destination.includes('가고시마') || destination.includes('삿포로') || destination.includes('시즈오카') || destination.includes('나고야') || destination.includes('오키나와') || destination.includes('마쓰야마') || destination.includes('구마모토') || destination.includes('고베')) {
+            return '¥';
+        } else if (destination.includes('미국') || destination.includes('뉴욕') || destination.includes('LA') || destination.includes('샌프란시스코') || destination.includes('로스앤젤레스') || destination.includes('라스베이거스') || destination.includes('하와이')) {
+            return '$';
+        } else if (destination.includes('유럽') || destination.includes('파리') || destination.includes('런던') || destination.includes('독일') || destination.includes('로마') || destination.includes('바르셀로나') || destination.includes('암스테르담') || destination.includes('베를린') || destination.includes('하이델베르크') || destination.includes('프라하')) {
+            return '€';
+        } else if (destination.includes('중국') || destination.includes('베이징') || destination.includes('상하이')) {
+            return '¥';
+        } else if (destination.includes('태국') || destination.includes('방콕') || destination.includes('치앙마이') || destination.includes('푸켓')) {
+            return '฿';
+        } else if (destination.includes('베트남') || destination.includes('호치민') || destination.includes('하노이') || destination.includes('나트랑') || destination.includes('하롱비') || destination.includes('다낭')) {
+            return '₫';
+        } else if (destination.includes('싱가포르')) {
+            return 'S$';
+        } else if (destination.includes('두바이')) {
+            return 'AED';
+        } else if (destination.includes('시드니') || destination.includes('멜버른')) {
+            return 'A$';
+        }
+
+        return '₩'; // 기본값: 한국 원화
+    };
+
+    // 통화 코드에 따른 통화 기호 매핑
+    const getSymbolForCurrency = (currency?: string) => {
+        switch (currency) {
+            case 'KRW':
+                return '₩';
+            case 'JPY':
+                return '¥';
+            case 'USD':
+                return '$';
+            case 'EUR':
+                return '€';
+            case 'CNY':
+                return '¥';
+            case 'THB':
+                return '฿';
+            case 'VND':
+                return '₫';
+            case 'SGD':
+                return 'S$';
+            case 'AED':
+                return 'AED';
+            case 'AUD':
+                return 'A$';
+            default:
+                return '';
+        }
+    };
+
+    // 장소의 총 지출 계산 (통화별)
+    const getExpenseTotalsByCurrency = (place: Place): Record<string, number> => {
+        if (!place.expenses || place.expenses.length === 0) {
+            return {};
+        }
+
+        return place.expenses.reduce<Record<string, number>>((totals: Record<string, number>, expense) => {
+            const currency = expense.currency || 'KRW';
+            totals[currency] = (totals[currency] || 0) + expense.amount;
+            return totals;
+        }, {});
+    };
+
+    const formatExpenseSummary = (place: Place) => {
+        const totalsByCurrency = getExpenseTotalsByCurrency(place);
+        const entries = Object.entries(totalsByCurrency);
+
+        if (entries.length === 0) {
+            // 목적지 기반 통화 기호로 0 표시
+            return `지출 총합 ${getCurrencySymbol()}0`;
+        }
+
+        return `지출 총합 ${entries
+            .map(([currency, amount]) => `${getSymbolForCurrency(currency) || currency} ${amount.toLocaleString()}`)
+            .join(' + ')}`;
+    };
+
+    // 지도 영역 높이 애니메이션
+    const mapHeight = useRef(new Animated.Value(INITIAL_MAP_HEIGHT)).current;
+    const currentHeight = useRef(INITIAL_MAP_HEIGHT);
+
+    // 지도 ref
+    const mapRef = useRef<MapView>(null);
+
+    // 실제 경로 데이터 저장
+    const [routeCoordinates, setRouteCoordinates] = useState<{ latitude: number; longitude: number }[]>([]);
+
+    // PanResponder 설정
+    const panResponder = useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => true,
+            onMoveShouldSetPanResponder: () => true,
+            onPanResponderMove: (_, gestureState) => {
+                // 아래로 드래그하면 지도가 커지고, 위로 드래그하면 작아짐
+                const newHeight = Math.max(
+                    MIN_MAP_HEIGHT,
+                    Math.min(MAX_MAP_HEIGHT, currentHeight.current + gestureState.dy)
+                );
+
+                mapHeight.setValue(newHeight);
+            },
+            onPanResponderRelease: (_, gestureState) => {
+                const newHeight = Math.max(
+                    MIN_MAP_HEIGHT,
+                    Math.min(MAX_MAP_HEIGHT, currentHeight.current + gestureState.dy)
+                );
+
+                currentHeight.current = newHeight;
+
+                Animated.spring(mapHeight, {
+                    toValue: newHeight,
+                    useNativeDriver: false,
+                    tension: 50,
+                    friction: 8,
+                }).start();
+            },
+        })
+    ).current;
+
+    // 화면 포커스될 때 places 로드
+    useFocusEffect(
+        useCallback(() => {
+            if (planId && tripData) {
+                loadPlaces();
+            }
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [planId, selectedDay]) // loadPlaces는 의도적으로 제외
+    );
+
+    // selectedDay 변경 시 places 로드
+    useEffect(() => {
+        if (planId && tripData) {
+            loadPlaces();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedDay]); // loadPlaces는 의도적으로 제외
+
+    if (!tripData) {
+        return (
+            <View style={styles.container}>
+                <View style={styles.header}>
+                    <TouchableOpacity onPress={() => router.back()} style={styles.closeButton}>
+                        <Feather name="x" size={24} color="#000" />
+                    </TouchableOpacity>
+                </View>
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 16, color: '#9E9E9E' }}>여행 계획을 찾을 수 없습니다</Text>
+                </View>
+            </View>
+        );
+    }
+
+    const currentDayData = tripData.days.find(day => day.dayNumber === selectedDay);
+    // 초기 지도 좌표 (City 정보에서 가져오기)
+    const initialRegion = useMemo(() => {
+        if (tripData?.destinationCity?.latitude && tripData?.destinationCity?.longitude) {
+            return {
+                latitude: tripData.destinationCity.latitude,
+                longitude: tripData.destinationCity.longitude,
+                latitudeDelta: 0.02,
+                longitudeDelta: 0.02,
+            };
+        }
+        // Fallback: 서울
+        return {
+            latitude: 37.5665,
+            longitude: 126.9780,
+            latitudeDelta: 0.02,
+            longitudeDelta: 0.02,
+        };
+    }, [tripData?.destinationCity]);
+
+    // 선택한 일차의 장소들을 마커로 표시
+    // 편집 모드에서는 editedPlaces 사용, 아닐 때는 currentDayData.places 사용
+    const placesToDisplay = useMemo(() => {
+        if (isEditMode && editedPlaces !== null) {
+            return editedPlaces;
+        }
+        return currentDayData?.places || [];
+    }, [isEditMode, editedPlaces, currentDayData]);
+
+    const markers = useMemo(() => {
+        return placesToDisplay;
+    }, [placesToDisplay]);
+
+    const extractDateFromValue = useCallback((value?: string) => {
+        if (!value) return undefined;
+        if (value.includes('T')) {
+            return value.split('T')[0];
+        }
+        if (value.includes('.')) {
+            return value.replace(/\./g, '-');
+        }
+        return value;
+    }, []);
+
+    const extractComparableTimestamp = useCallback((flight: Flight, date: string) => {
+        const departureDate = extractDateFromValue(flight.departureDate ?? flight.departureTime);
+        if (departureDate === date && flight.departureTime) {
+            const departure = new Date(flight.departureTime);
+            if (!Number.isNaN(departure.getTime())) {
+                return departure.getTime();
+            }
+        }
+
+        const arrivalDate = extractDateFromValue(flight.arrivalDate ?? flight.arrivalTime);
+        if (arrivalDate === date && flight.arrivalTime) {
+            const arrival = new Date(flight.arrivalTime);
+            if (!Number.isNaN(arrival.getTime())) {
+                return arrival.getTime();
+            }
+        }
+
+        if (flight.departureTime) {
+            const departure = new Date(flight.departureTime);
+            if (!Number.isNaN(departure.getTime())) {
+                return departure.getTime();
+            }
+        }
+
+        if (flight.arrivalTime) {
+            const arrival = new Date(flight.arrivalTime);
+            if (!Number.isNaN(arrival.getTime())) {
+                return arrival.getTime();
+            }
+        }
+
+        return 0;
+    }, [extractDateFromValue]);
+
+    const firstDayNumber = tripData.days[0]?.dayNumber;
+    const lastDayNumber = tripData.days[tripData.days.length - 1]?.dayNumber;
+    const isFirstDay = currentDayData?.dayNumber === firstDayNumber;
+    const isLastDay = currentDayData?.dayNumber === lastDayNumber;
+
+    const flightsForCurrentDay = useMemo(() => {
+        if (!currentDayData?.date) {
+            return [];
+        }
+
+        return flights
+            .filter((flight) => {
+                // isSelected가 true인 항공편만 표시
+                if (!flight.isSelected) {
+                    return false;
+                }
+
+                const departureDate = extractDateFromValue(flight.departureDate ?? flight.departureTime);
+                const arrivalDate = extractDateFromValue(flight.arrivalDate ?? flight.arrivalTime);
+                return departureDate === currentDayData.date || arrivalDate === currentDayData.date;
+            })
+            .sort((a, b) => {
+                const aTime = extractComparableTimestamp(a, currentDayData.date!);
+                const bTime = extractComparableTimestamp(b, currentDayData.date!);
+                return aTime - bTime;
+            });
+    }, [currentDayData?.date, extractComparableTimestamp, extractDateFromValue, flights]);
+
+    const flightsForDisplay = useMemo(() => (isEditMode ? [] : flightsForCurrentDay), [flightsForCurrentDay, isEditMode]);
+
+    const flightsTop = useMemo(() => {
+        if (flightsForDisplay.length === 0) {
+            return [];
+        }
+
+        if (isLastDay && !isFirstDay) {
+            return [];
+        }
+
+        return flightsForDisplay;
+    }, [flightsForDisplay, isFirstDay, isLastDay]);
+
+    const flightsBottom = useMemo(() => {
+        if (!isLastDay || isFirstDay || flightsForDisplay.length === 0) {
+            return [];
+        }
+        return flightsForDisplay;
+    }, [flightsForDisplay, isFirstDay, isLastDay]);
+
+    const hasFlights = flightsForDisplay.length > 0;
+
+    const formatTimeFromValue = useCallback((value?: string) => {
+        if (!value) return undefined;
+        if (value.includes('T')) {
+            return value.split('T')[1].slice(0, 5);
+        }
+        if (value.length >= 5) {
+            return value.slice(0, 5);
+        }
+        return value;
+    }, []);
+
+    const formatAirportDisplay = useCallback((name?: string, code?: string) => {
+        if (name && code) return `${name}(${code})`;
+        if (name) return name;
+        if (code) return code;
+        return '';
+    }, []);
+
+    // 실제 경로 가져오기
+    useEffect(() => {
+        const fetchRoutes = async () => {
+            const validMarkers = markers.filter(
+                place => place.latitude && place.longitude
+            );
+
+            if (validMarkers.length < 2) {
+                setRouteCoordinates([]);
+                return;
+            }
+
+            // 모든 구간의 경로를 가져와서 하나로 합치기
+            const allRouteCoordinates: { latitude: number; longitude: number }[] = [];
+
+            for (let i = 0; i < validMarkers.length - 1; i++) {
+                const origin = {
+                    latitude: validMarkers[i].latitude!,
+                    longitude: validMarkers[i].longitude!,
+                };
+                const destination = {
+                    latitude: validMarkers[i + 1].latitude!,
+                    longitude: validMarkers[i + 1].longitude!,
+                };
+
+                const routeSegment = await fetchRoute(origin, destination, GOOGLE_MAPS_API_KEY);
+
+                // 첫 번째 구간이 아니면 시작점 중복 제거
+                if (i > 0 && routeSegment.length > 0) {
+                    allRouteCoordinates.push(...routeSegment.slice(1));
+                } else {
+                    allRouteCoordinates.push(...routeSegment);
+                }
+            }
+
+            setRouteCoordinates(allRouteCoordinates);
+        };
+
+        fetchRoutes();
+    }, [markers]);
+
+    // 장소가 추가되거나 변경될 때 지도 확대 자동 조정
+    useEffect(() => {
+        if (!mapRef.current) return;
+
+        if (markers.length > 0) {
+            const validMarkers = markers.filter(
+                place => place.latitude && place.longitude
+            );
+
+            if (validMarkers.length > 0) {
+                const coordinates = validMarkers.map(place => ({
+                    latitude: place.latitude!,
+                    longitude: place.longitude!,
+                }));
+
+                // 약간의 딜레이를 주어 지도가 렌더링된 후 실행
+                setTimeout(() => {
+                    mapRef.current?.fitToCoordinates(coordinates, {
+                        edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+                        animated: true,
+                    });
+                }, 500);
+            }
+        } else {
+            // 장소가 없을 때는 기본 좌표로 이동
+            setTimeout(() => {
+                mapRef.current?.animateToRegion(initialRegion, 500);
+            }, 300);
+        }
+    }, [markers, initialRegion]);
+
+    const handleClose = () => {
+        // 이전 화면으로 돌아가기
+        router.back();
+    };
+
+    const handleAddPlace = () => {
+        // 목적지 좌표 정보 전달 (City 정보에서 가져오기)
+        const destinationCoords = tripData.destinationCity?.latitude && tripData.destinationCity?.longitude
+            ? { latitude: tripData.destinationCity.latitude, longitude: tripData.destinationCity.longitude }
+            : { latitude: 37.5665, longitude: 126.9780 }; // Fallback: 서울
+
+        router.push({
+            pathname: '/add-place',
+            params: {
+                planId: planId || '',
+                dayNumber: selectedDay.toString(),
+                destination: tripData.destination,
+                latitude: destinationCoords.latitude.toString(),
+                longitude: destinationCoords.longitude.toString(),
+            },
+        });
+    };
+
+    const handleChecklistPress = () => {
+        router.push({
+            pathname: '/checklist',
+            params: {
+                planId: planId || '',
+            },
+        });
+    };
+
+    const handleFlightsPress = () => {
+        router.push({
+            pathname: '/flights',
+            params: {
+                planId: planId || '',
+            },
+        });
+    };
+
+    const handleAccommodationsPress = () => {
+        router.push({
+            pathname: '/accommodations',
+            params: {
+                planId: planId || '',
+            },
+        });
+    };
+
+    // 장소 카드 렌더링 함수
+    const renderPlaceItem = ({ item: place, getIndex, drag, isActive }: RenderItemParams<Place>) => {
+        const currentPlaces = placesToDisplay;
+        if (!currentPlaces || currentPlaces.length === 0) return null;
+
+        const index = getIndex();
+        if (index === undefined) return null;
+
+        return (
+            <ScaleDecorator>
+                <View
+                    style={[
+                        styles.placeCardContainer,
+                        isActive && styles.placeCardDragging,
+                    ]}
+                >
+                    {/* 번호와 연결선 */}
+                    <View style={styles.placeLeftSection}>
+                        <View style={styles.placeNumber}>
+                            <Text style={styles.placeNumberText}>{index + 1}</Text>
+                        </View>
+                        <View style={[
+                            styles.connectionLineContainer,
+                            index === currentPlaces.length - 1 && styles.lastConnectionLine
+                        ]}>
+                            <View style={styles.connectionLine} />
+                            {/* 거리 표시 (마지막 항목은 투명) */}
+                            <View style={[
+                                styles.distanceBadge,
+                                index === currentPlaces.length - 1 && { opacity: 0 }
+                            ]}>
+                                <Text style={styles.distanceText}>
+                                    {(() => {
+                                        const nextPlace = currentPlaces[index + 1];
+                                        if (nextPlace &&
+                                            place.latitude && place.longitude &&
+                                            nextPlace.latitude && nextPlace.longitude) {
+                                            const distance = calculateDistance(
+                                                place.latitude,
+                                                place.longitude,
+                                                nextPlace.latitude,
+                                                nextPlace.longitude
+                                            );
+                                            if (distance < 1) {
+                                                return `${Math.round(distance * 1000)}m`;
+                                            }
+                                            return `${distance.toFixed(1)}km`;
+                                        }
+                                        return '';
+                                    })()}
+                                </Text>
+                            </View>
+                        </View>
+                    </View>
+
+                    {/* 카드 내용 */}
+                    <TouchableOpacity
+                        style={styles.placeCard}
+                        onPress={() => {
+                            if (!isEditMode) {
+                                router.push({
+                                    pathname: '/place-detail',
+                                    params: {
+                                        planId: planId || '',
+                                        dayNumber: selectedDay.toString(),
+                                        placeId: place.id,
+                                    },
+                                });
+                            }
+                        }}
+                        disabled={isEditMode}
+                    >
+                        <View style={styles.placeCardInner}>
+                            {/* 시간 표시 (왼쪽) */}
+                            {place.time && (
+                                <Text style={styles.placeTimeLeft}>{place.time}</Text>
+                            )}
+
+                            {/* 장소 정보 */}
+                            <View style={styles.placeMainInfo}>
+                                <Text style={styles.placeName}>{place.name}</Text>
+                                {place.address && (
+                                    <Text style={styles.placeAddress} numberOfLines={1}>
+                                        {place.address}
+                                    </Text>
+                                )}
+                                {place.time && (
+                                    <Text style={styles.placeTimeInCard}>{place.time}</Text>
+                                )}
+                            </View>
+
+                            {/* 하단 정보 (좋아요, 지출) */}
+                            <View style={styles.placeBottomInfo}>
+                                <TouchableOpacity
+                                    style={styles.placeLikeSection}
+                                    onPress={() => {
+                                        if (!isEditMode && planId) {
+                                            handlePlaceLikePress(place.id);
+                                        }
+                                    }}
+                                    disabled={isEditMode || !planId}
+                                    activeOpacity={0.7}
+                                >
+                                    <Feather
+                                        name="heart"
+                                        size={12}
+                                        color={place.isLiked === true ? "#ff4444" : "#000"}
+                                        fill={place.isLiked === true ? "#ff4444" : "none"}
+                                    />
+                                    <Text style={styles.placeLikeText}>좋아요</Text>
+                                    <Text style={[
+                                        styles.placeLikeCount,
+                                        place.isLiked === true && styles.placeLikeCountActive
+                                    ]}>
+                                        {place.likes || 0}
+                                    </Text>
+                                </TouchableOpacity>
+                                <Text style={styles.placeExpense}>
+                                    {formatExpenseSummary(place)}
+                                </Text>
+                            </View>
+                        </View>
+                    </TouchableOpacity>
+
+                    {/* 리오더 핸들 (편집 모드일 때만 표시) */}
+                    {isEditMode && (
+                        <TouchableOpacity
+                            style={styles.reorderHandle}
+                            onLongPress={drag}
+                            disabled={!isEditMode || isActive}
+                        >
+                            <MaterialIcons
+                                name="reorder"
+                                size={24}
+                                color={isActive ? '#088CDA' : '#C7C7C7'}
+                            />
+                        </TouchableOpacity>
+                    )}
+                </View>
+            </ScaleDecorator>
+        );
+    };
+
+    const renderFlightScheduleCard = (
+        flight: Flight,
+        placement: 'top' | 'bottom',
+        index: number,
+        total: number
+    ) => {
+        const departureTimeLabel = formatTimeFromValue(flight.departureTime);
+        const arrivalTimeLabel = formatTimeFromValue(flight.arrivalTime);
+        const departureAirportLabel = formatAirportDisplay(flight.departureAirport, flight.departureAirportCode);
+        const arrivalAirportLabel = formatAirportDisplay(flight.arrivalAirport, flight.arrivalAirportCode);
+
+        const cardLabel = (() => {
+            if (placement === 'top' && isFirstDay) return '출발';
+            if (placement === 'bottom' && isLastDay) return '귀국';
+
+            const dayDate = currentDayData?.date;
+            if (dayDate) {
+                const departureDate = extractDateFromValue(flight.departureDate ?? flight.departureTime);
+                const arrivalDate = extractDateFromValue(flight.arrivalDate ?? flight.arrivalTime);
+
+                if (departureDate === dayDate && arrivalDate === dayDate) {
+                    return '이동';
+                }
+
+                if (departureDate === dayDate) {
+                    return '출발';
+                }
+
+                if (arrivalDate === dayDate) {
+                    return '도착';
+                }
+            }
+
+            return '항공편';
+        })();
+
+        const flightNumberDisplay = [flight.airline, flight.flightNumber].filter(Boolean).join(' ') || '항공편';
+        const departureDate = extractDateFromValue(flight.departureDate ?? flight.departureTime);
+        const arrivalDate = extractDateFromValue(flight.arrivalDate ?? flight.arrivalTime);
+        const formattedDepartureDate = departureDate?.replace(/-/g, '.') ?? '';
+        const formattedArrivalDate = arrivalDate?.replace(/-/g, '.') ?? '';
+        const scheduleLabel =
+            formattedDepartureDate && formattedArrivalDate
+                ? formattedDepartureDate === formattedArrivalDate
+                    ? formattedDepartureDate
+                    : `${formattedDepartureDate} ~ ${formattedArrivalDate}`
+                : formattedDepartureDate || formattedArrivalDate || currentDayData?.displayDate || '';
+
+        const durationLabel = (() => {
+            if (flight.duration) return flight.duration;
+            if (!flight.departureTime || !flight.arrivalTime) return undefined;
+
+            const departure = new Date(flight.departureTime);
+            const arrival = new Date(flight.arrivalTime);
+
+            if (Number.isNaN(departure.getTime()) || Number.isNaN(arrival.getTime())) {
+                return undefined;
+            }
+
+            let diffMinutes = Math.round((arrival.getTime() - departure.getTime()) / 60000);
+            if (diffMinutes < 0) {
+                diffMinutes = 0;
+            }
+
+            const hours = Math.floor(diffMinutes / 60);
+            const minutes = diffMinutes % 60;
+
+            if (hours > 0 && minutes > 0) return `${hours}시간 ${minutes}분`;
+            if (hours > 0) return `${hours}시간`;
+            return `${minutes}분`;
+        })();
+
+        const timeRangeLabel =
+            departureTimeLabel || arrivalTimeLabel
+                ? [departureTimeLabel, arrivalTimeLabel].filter(Boolean).join(' - ')
+                : undefined;
+        const timeRangeWithDuration =
+            timeRangeLabel && durationLabel ? `${timeRangeLabel} (${durationLabel} 소요)` : timeRangeLabel;
+
+        const connectionLineStyles: ViewStyle[] = [styles.connectionLineContainer];
+        if (
+            placement === 'bottom' &&
+            (index === total - 1 || (currentDayData?.places?.length ?? 0) === 0)
+        ) {
+            connectionLineStyles.push(styles.lastConnectionLine);
+        }
+        if (
+            placement === 'top' &&
+            total === 1 &&
+            (currentDayData?.places?.length ?? 0) === 0 &&
+            flightsBottom.length === 0
+        ) {
+            connectionLineStyles.push(styles.lastConnectionLine);
+        }
+
+        return (
+            <View style={styles.placeCardContainer}>
+                <View style={styles.placeLeftSection}>
+                    <View style={[styles.placeNumber, styles.flightPlaceNumber]}>
+                        <MaterialIcons name="flight" size={14} color="#fff" />
+                    </View>
+                    <View style={connectionLineStyles}>
+                        <View style={styles.connectionLine} />
+                        <View style={[styles.distanceBadge, styles.hiddenDistanceBadge]}>
+                            <Text style={styles.distanceText}>{' '}</Text>
+                        </View>
+                    </View>
+                </View>
+                <View style={[styles.placeCard, styles.flightPlaceCard]}>
+                    <View style={styles.placeCardInner}>
+                        <View style={styles.placeMainInfo}>
+                            <Text style={styles.placeName}>{flightNumberDisplay}</Text>
+                            <Text style={styles.placeAddress} numberOfLines={1}>
+                                {departureAirportLabel} → {arrivalAirportLabel}
+                            </Text>
+                            {timeRangeWithDuration ? (
+                                <Text style={styles.placeTimeInCard}>{timeRangeWithDuration}</Text>
+                            ) : null}
+                        </View>
+                        <View style={styles.placeBottomInfo}>
+                            <View style={styles.placeLikeSection}>
+                                <MaterialIcons name="flight" size={12} color="#088CDA" />
+                                <Text style={[styles.placeLikeText, styles.flightLabelText]}>{cardLabel}</Text>
+                            </View>
+                            <Text style={[styles.placeExpense, styles.flightScheduleMeta]}>
+                                {scheduleLabel}
+                            </Text>
+                        </View>
+                    </View>
+                </View>
+            </View>
+        );
+    };
+
+    return (
+        <GestureHandlerRootView style={styles.container}>
+            {/* 상단 헤더 */}
+            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+                <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
+                    <Feather name="x" size={24} color="#000" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={styles.moreButton}
+                    onPress={() => setShowSidePanel(true)}
+                >
+                    <Feather name="more-horizontal" size={24} color="#000" />
+                </TouchableOpacity>
+            </View>
+
+            {/* 상단 타이틀 영역 */}
+            <View style={styles.titleSection}>
+                <View style={styles.titleRow}>
+                    <Text style={styles.title}>{tripData.title}</Text>
+                    <Text style={styles.editButton}>편집</Text>
+                </View>
+                <Text style={styles.dateRange}>
+                    {tripData.startDate} - {tripData.endDate}
+                </Text>
+
+                {/* 항공편/숙소 버튼 */}
+                <View style={styles.quickActionsRow}>
+                    <TouchableOpacity
+                        style={[
+                            styles.quickActionButton,
+                            selectedFlights.length > 0 && styles.quickActionButtonFilled
+                        ]}
+                        onPress={handleFlightsPress}
+                    >
+                        {selectedFlights.length === 0 ? (
+                            <>
+                                <View style={styles.iconCircle}>
+                                    <Feather name="plus" size={10} color="#C7C7C7" />
+                                </View>
+                                <Text style={styles.quickActionText}>항공편</Text>
+                            </>
+                        ) : (
+                            <Text style={styles.quickActionText}>항공편 {selectedFlights.length}</Text>
+                        )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[
+                            styles.quickActionButton,
+                            selectedAccommodations.length > 0 && styles.quickActionButtonFilled
+                        ]}
+                        onPress={handleAccommodationsPress}
+                    >
+                        {selectedAccommodations.length === 0 ? (
+                            <>
+                                <View style={styles.iconCircle}>
+                                    <Feather name="plus" size={10} color="#C7C7C7" />
+                                </View>
+                                <Text style={styles.quickActionText}>숙소</Text>
+                            </>
+                        ) : (
+                            <Text style={styles.quickActionText}>숙소 {selectedAccommodations.length}</Text>
+                        )}
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.participantsRow}>
+                    <View style={styles.participantAvatars}>
+                        <View style={styles.avatar}>
+                            <MaterialIcons name="account-circle" size={32} color="#9E9E9E" />
+                        </View>
+                        <View style={styles.moreAvatar}>
+                            <Feather name="more-horizontal" size={12} color="#fff" />
+                        </View>
+                    </View>
+                    <View style={styles.participantBadge}>
+                        <Text style={styles.participantText}>{tripData.participants}명 참여중</Text>
+                    </View>
+                </View>
+            </View>
+
+            {/* 지도 영역 */}
+            <Animated.View style={[styles.mapSection, { height: mapHeight }]}>
+                <MapView
+                    ref={mapRef}
+                    provider={PROVIDER_GOOGLE}
+                    style={styles.map}
+                    initialRegion={initialRegion}
+                    showsUserLocation={false}
+                    showsMyLocationButton={false}
+                >
+                    {/* 장소들 사이의 실제 경로선 */}
+                    {routeCoordinates.length > 0 && (
+                        <Polyline
+                            coordinates={routeCoordinates}
+                            strokeColor="#088CDA"
+                            strokeWidth={5}
+                            lineCap="round"
+                            lineJoin="round"
+                        />
+                    )}
+
+                    {/* 마커들 */}
+                    {markers
+                        .filter(place => place.latitude && place.longitude)
+                        .map((place, index) => {
+                            const validMarkers = markers.filter(p => p.latitude && p.longitude);
+                            const markerIndex = validMarkers.findIndex(p => p.id === place.id);
+
+                            return (
+                                <Marker
+                                    key={place.id}
+                                    coordinate={{
+                                        latitude: place.latitude!,
+                                        longitude: place.longitude!,
+                                    }}
+                                    title={place.name}
+                                    description={place.address}
+                                >
+                                    <View style={styles.customMarker}>
+                                        <Text style={styles.markerNumber}>{markerIndex + 1}</Text>
+                                    </View>
+                                </Marker>
+                            );
+                        })}
+                </MapView>
+            </Animated.View>
+
+            {/* 하단 일정 영역 */}
+            <Animated.View style={styles.scheduleSection}>
+                {/* 핸들 */}
+                <View style={styles.handleTouchArea} {...panResponder.panHandlers}>
+                    <View style={styles.handle} />
+                </View>
+
+                {/* 일차 탭 */}
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.dayTabsScrollView}
+                    contentContainerStyle={styles.dayTabs}
+                >
+                    {tripData.days.map((day) => (
+                        <TouchableOpacity
+                            key={day.id}
+                            onPress={() => setSelectedDay(day.dayNumber)}
+                            style={[
+                                styles.dayTab,
+                                selectedDay === day.dayNumber && styles.dayTabActive,
+                            ]}
+                        >
+                            <Text
+                                style={[
+                                    styles.dayTabText,
+                                    selectedDay === day.dayNumber && styles.dayTabTextActive,
+                                ]}
+                            >
+                                {day.dayNumber}일차
+                            </Text>
+                        </TouchableOpacity>
+                    ))}
+                </ScrollView>
+
+                {/* 일정 헤더 (sticky) */}
+                <View style={styles.dayHeader}>
+                    <View style={styles.dayInfo}>
+                        <Text style={styles.dayLabel}>{currentDayData?.dayNumber}일차</Text>
+                        <Text style={styles.dayDate}>{currentDayData?.displayDate}</Text>
+                    </View>
+                    <TouchableOpacity onPress={async () => {
+                        if (isEditMode) {
+                            // 완료 버튼: 편집 모드 종료 및 변경사항 저장
+                            if (editedPlaces !== null && planId) {
+                                const placeIds = editedPlaces.map(place => place.id);
+                                try {
+                                    await reorderPlaces(planId, selectedDay, placeIds);
+                                    setEditedPlaces(null); // 편집 상태 초기화
+                                    setIsEditMode(false);
+                                } catch (error) {
+                                    console.error('Failed to save reordered places:', error);
+                                    // 에러 발생 시 편집 모드 유지 (사용자가 다시 시도할 수 있도록)
+                                }
+                            } else {
+                                setIsEditMode(false);
+                            }
+                        } else {
+                            // 편집 버튼: 편집 모드 시작
+                            if (currentDayData?.places) {
+                                setEditedPlaces([...currentDayData.places]); // 현재 places를 편집용 상태로 복사
+                            }
+                            setIsEditMode(true);
+                        }
+                    }}>
+                        <Text style={styles.editText}>{isEditMode ? '완료' : '편집'}</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {/* 편집 모드 안내 */}
+                {isEditMode && currentDayData && currentDayData.places.length > 0 && (
+                    <View style={styles.editModeHint}>
+                        <MaterialIcons name="info-outline" size={16} color="#088CDA" />
+                        <Text style={styles.editModeHintText}>
+                            리오더 아이콘(≡)을 길게 눌러 드래그하여 순서를 변경하세요
+                        </Text>
+                    </View>
+                )}
+
+                {/* 일정 내용 */}
+                <View style={styles.scheduleContentContainer}>
+                    <DraggableFlatList
+                        data={placesToDisplay}
+                        renderItem={renderPlaceItem}
+                        keyExtractor={(item) => item.id}
+                        onDragEnd={({ data, from, to }) => {
+                            if (from !== to) {
+                                if (isEditMode) {
+                                    // 편집 모드: 로컬 상태만 업데이트
+                                    setEditedPlaces(data);
+                                } else {
+                                    // 일반 모드: 즉시 서버에 저장
+                                    if (planId) {
+                                        const placeIds = data.map(place => place.id);
+                                        reorderPlaces(planId, selectedDay, placeIds);
+                                    }
+                                }
+                            }
+                        }}
+                        activationDistance={isEditMode ? 10 : 999999}
+                        containerStyle={styles.draggableList}
+                        contentContainerStyle={styles.draggableListContent}
+                        showsVerticalScrollIndicator={false}
+                        ListHeaderComponent={() => (
+                            <>
+                                {flightsTop.map((flight, index) => (
+                                    <React.Fragment key={`flight-${flight.id}-top-${index}`}>
+                                        {renderFlightScheduleCard(flight, 'top', index, flightsTop.length)}
+                                    </React.Fragment>
+                                ))}
+                                {!(placesToDisplay.length || hasFlights) && (
+                                    <View style={styles.emptyPlaces}>
+                                        <Text style={styles.emptyPlacesText}>아직 추가된 장소가 없습니다</Text>
+                                    </View>
+                                )}
+                            </>
+                        )}
+                        ListFooterComponent={() => (
+                            <View>
+                                {flightsBottom.map((flight, index) => (
+                                    <React.Fragment key={`flight-${flight.id}-bottom-${index}`}>
+                                        {renderFlightScheduleCard(flight, 'bottom', index, flightsBottom.length)}
+                                    </React.Fragment>
+                                ))}
+                                <View style={styles.addPlaceButtonContainer}>
+                                    <TouchableOpacity style={styles.addPlaceButton} onPress={handleAddPlace}>
+                                        <Feather name="plus" size={12} color="#fff" />
+                                        <Text style={styles.addPlaceText}>장소 추가</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        )}
+                    />
+                </View>
+            </Animated.View>
+
+            {/* 하단 네비게이션 바 */}
+            <View style={styles.bottomNav}>
+                <TouchableOpacity style={styles.navItem}>
+                    <MaterialIcons name="calendar-today" size={30} color="#088CDA" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.navItem} onPress={handleChecklistPress}>
+                    <MaterialIcons name="card-travel" size={32} color="#9E9E9E" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={styles.navItem}
+                    onPress={() => router.push({
+                        pathname: '/expenses',
+                        params: { planId: planId || '' }
+                    })}
+                >
+                    <MaterialIcons name="receipt" size={32} color="#9E9E9E" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={styles.navItem}
+                    onPress={() => router.push({
+                        pathname: '/chat',
+                        params: { planId: planId || '' }
+                    })}
+                >
+                    <MaterialIcons name="chat" size={32} color="#9E9E9E" />
+                </TouchableOpacity>
+            </View>
+
+            {/* 여행기 생성 버튼 (여행이 끝난 경우에만 표시) */}
+            {isTravelCompleted && (
+                <View style={[styles.createPostButtonContainer, { paddingBottom: insets.bottom + 8 }]}>
+                    <TouchableOpacity
+                        style={styles.createPostButton}
+                        onPress={() => {
+                            if (planId) {
+                                router.push({
+                                    pathname: '/create-travel-post',
+                                    params: { planId },
+                                });
+                            }
+                        }}
+                    >
+                        <Text style={styles.createPostButtonText}>여행기 생성하기</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
+
+            {/* Side Panel Modal */}
+            <Modal
+                visible={showSidePanel}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setShowSidePanel(false)}
+            >
+                <Pressable
+                    style={styles.sidePanelOverlay}
+                    onPress={() => setShowSidePanel(false)}
+                >
+                    <Pressable
+                        style={styles.sidePanel}
+                        onPress={(e) => e.stopPropagation()}
+                    >
+                        {/* Side Panel Header */}
+                        <View style={styles.sidePanelHeader}>
+                            <TouchableOpacity
+                                onPress={() => setShowSidePanel(false)}
+                                style={styles.sidePanelCloseButton}
+                            >
+                                <Feather name="x" size={24} color="#000" />
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* Side Panel Menu Items */}
+                        <View style={styles.sidePanelContent}>
+                            <TouchableOpacity
+                                style={styles.sidePanelMenuItem}
+                                onPress={() => {
+                                    setShowSidePanel(false);
+                                    router.push({
+                                        pathname: '/participants',
+                                        params: { planId: planId || '' },
+                                    });
+                                }}
+                            >
+                                <Feather name="user-plus" size={16} color="#000" />
+                                <Text style={styles.sidePanelMenuItemText}>참여자 편집하기</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.sidePanelMenuItem}
+                                onPress={() => {
+                                    setShowSidePanel(false);
+                                    if (planId) {
+                                        router.push({
+                                            pathname: '/create-travel-post',
+                                            params: { planId },
+                                        });
+                                    }
+                                }}
+                            >
+                                <Feather name="book" size={16} color="#000" />
+                                <Text style={styles.sidePanelMenuItemText}>여행기 생성하기</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+        </GestureHandlerRootView>
+    );
+}
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: '#fff',
+    },
+    header: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingBottom: 8,
+        backgroundColor: '#F6F6F6',
+    },
+    closeButton: {
+        width: 24,
+        height: 24,
+    },
+    moreButton: {
+        width: 24,
+        height: 24,
+    },
+    titleSection: {
+        backgroundColor: '#F6F6F6',
+        paddingHorizontal: 20,
+        paddingBottom: 24,
+        paddingTop: 16,
+    },
+    titleRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        gap: 8,
+        marginBottom: 8,
+    },
+    title: {
+        fontSize: 24,
+        fontWeight: '600',
+        lineHeight: 32,
+        letterSpacing: -0.3,
+        color: '#000',
+    },
+    editButton: {
+        fontSize: 12,
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#585858',
+    },
+    dateRange: {
+        fontSize: 16,
+        fontWeight: '600',
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#585858',
+        marginBottom: 8,
+    },
+    quickActionsRow: {
+        flexDirection: 'row',
+        gap: 8,
+        marginBottom: 8,
+    },
+    quickActionButton: {
+        backgroundColor: '#C7C7C7',
+        borderRadius: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingHorizontal: 8,
+        height: 24,
+    },
+    quickActionButtonFilled: {
+        backgroundColor: '#088CDA',
+    },
+    quickActionText: {
+        fontSize: 12,
+        fontWeight: '600',
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#fff',
+    },
+    iconCircle: {
+        width: 16,
+        height: 16,
+        borderRadius: 8,
+        backgroundColor: 'rgba(255, 255, 255)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    participantsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    participantAvatars: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        position: 'relative',
+    },
+    avatar: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        overflow: 'hidden',
+    },
+    moreAvatar: {
+        width: 16,
+        height: 16,
+        borderRadius: 8,
+        backgroundColor: '#C7C7C7',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: -11,
+    },
+    participantBadge: {
+        backgroundColor: '#C7C7C7',
+        borderRadius: 16,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        height: 24,
+        justifyContent: 'center',
+    },
+    participantText: {
+        fontSize: 12,
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#fff',
+    },
+    mapSection: {
+        backgroundColor: '#F5F5F5',
+    },
+    map: {
+        width: '100%',
+        height: '100%',
+    },
+    scheduleSection: {
+        flex: 1,
+        backgroundColor: '#fff',
+        borderTopLeftRadius: 0,
+        borderTopRightRadius: 0,
+        justifyContent: 'flex-start',
+    },
+    handle: {
+        width: 40,
+        height: 3,
+        backgroundColor: '#C7C7C7',
+        borderRadius: 8,
+        alignSelf: 'center',
+        marginTop: 8,
+        marginBottom: 4,
+    },
+    handleTouchArea: {
+        paddingVertical: 8,
+        paddingHorizontal: 40,
+        alignSelf: 'center',
+    },
+    dayTabsScrollView: {
+        marginBottom: 16,
+        paddingBottom: 10,
+        flexGrow: 0,
+    },
+    dayTabs: {
+        paddingHorizontal: 21,
+        gap: 8,
+    },
+    dayTab: {
+        backgroundColor: '#C7C7C7',
+        borderRadius: 16,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        height: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    dayTabActive: {
+        backgroundColor: '#088CDA',
+    },
+    dayTabText: {
+        fontSize: 12,
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#fff',
+    },
+    dayTabTextActive: {
+        color: '#fff',
+    },
+    scheduleContentContainer: {
+        flex: 1,
+    },
+    scheduleContent: {
+        flex: 1,
+        paddingHorizontal: 21,
+        paddingTop: 16,
+    },
+    draggableList: {
+        flex: 1,
+    },
+    draggableListContent: {
+        paddingHorizontal: 21,
+        paddingTop: 16,
+        paddingBottom: 16,
+    },
+    addPlaceButtonContainer: {
+        paddingHorizontal: 0,
+        paddingBottom: 24,
+        backgroundColor: '#fff',
+    },
+    dayHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 21,
+        paddingBottom: 12,
+        backgroundColor: '#fff',
+        borderBottomWidth: 1,
+        borderBottomColor: '#F0F0F0',
+    },
+    dayInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    dayLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#000',
+    },
+    dayDate: {
+        fontSize: 12,
+        fontWeight: '600',
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#585858',
+    },
+    editText: {
+        fontSize: 12,
+        fontWeight: '600',
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#000',
+    },
+    addPlaceButton: {
+        backgroundColor: '#C7C7C7',
+        borderRadius: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingHorizontal: 5,
+        paddingVertical: 4,
+        height: 24,
+        alignSelf: 'flex-start',
+        marginTop: 8,
+    },
+    addPlaceText: {
+        fontSize: 12,
+        fontWeight: '600',
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#fff',
+    },
+    emptyPlaces: {
+        paddingVertical: 40,
+        alignItems: 'center',
+    },
+    emptyPlacesText: {
+        fontSize: 14,
+        color: '#9E9E9E',
+    },
+    flightPlaceCard: {
+        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+        borderWidth: 0,
+        borderColor: 'transparent',
+    },
+    flightPlaceNumber: {
+        backgroundColor: '#088CDA',
+    },
+    hiddenDistanceBadge: {
+        opacity: 0,
+    },
+    flightLabelText: {
+        color: '#585858',
+    },
+    flightScheduleMeta: {
+        color: '#585858',
+    },
+    placesList: {
+        marginTop: 0,
+    },
+    placeCardContainer: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        marginBottom: 16,
+    },
+    placeLeftSection: {
+        alignItems: 'center',
+        marginRight: 30,
+        flexShrink: 0,
+        marginLeft: 10,
+        position: 'relative',
+        alignSelf: 'stretch',
+    },
+    placeNumber: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        backgroundColor: '#088CDA',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginTop: 12,
+        zIndex: 1,
+    },
+    placeNumberText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#fff',
+        lineHeight: 16,
+        letterSpacing: -0.15,
+    },
+    connectionLineContainer: {
+        position: 'absolute',
+        top: 0,
+        bottom: -16,
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    lastConnectionLine: {
+        bottom: 0,
+    },
+    connectionLine: {
+        position: 'absolute',
+        width: 2,
+        height: '100%',
+        backgroundColor: '#C7C7C7',
+        top: 0,
+        left: '50%',
+        marginLeft: -0.5,
+    },
+    placeCard: {
+        flex: 1,
+        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: 8,
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    placeCardInner: {
+        padding: 16,
+        position: 'relative',
+    },
+    placeTimeLeft: {
+        position: 'absolute',
+        left: -45,
+        top: 12,
+        fontSize: 12,
+        fontWeight: '600',
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#585858',
+    },
+    placeMainInfo: {
+        marginBottom: 16,
+    },
+    placeName: {
+        fontSize: 16,
+        fontWeight: '400',
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#000',
+        marginBottom: 4,
+    },
+    placeAddress: {
+        fontSize: 12,
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#585858',
+        marginBottom: 4,
+    },
+    placeTimeInCard: {
+        fontSize: 12,
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#585858',
+    },
+    placeBottomInfo: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    placeLikeSection: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    placeLikeText: {
+        fontSize: 12,
+        fontWeight: '600',
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#000',
+    },
+    placeLikeCount: {
+        fontSize: 12,
+        fontWeight: '600',
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#585858',
+    },
+    placeLikeCountActive: {
+        color: '#ff4444',
+    },
+    placeExpense: {
+        fontSize: 12,
+        fontWeight: '600',
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#585858',
+    },
+    distanceBadge: {
+        backgroundColor: '#fff',
+        borderWidth: 1,
+        borderColor: '#C7C7C7',
+        borderRadius: 8,
+        paddingHorizontal: 4,
+        paddingVertical: 4,
+        marginTop: 20,
+        zIndex: 1,
+        minWidth: 60,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    distanceText: {
+        fontSize: 12,
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#000',
+        textAlign: 'center',
+    },
+    bottomNav: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: '#fff',
+        borderTopWidth: 1,
+        borderTopColor: '#E0E0E0',
+        paddingHorizontal: 40,
+        paddingTop: 8,
+        paddingBottom: Platform.OS === 'ios' ? 34 : 12,
+        height: Platform.OS === 'ios' ? 102 : 72,
+    },
+    navItem: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    createPostButtonContainer: {
+        backgroundColor: '#fff',
+        borderTopWidth: 1,
+        borderTopColor: '#E0E0E0',
+        paddingHorizontal: 40,
+        paddingTop: 8,
+    },
+    createPostButton: {
+        backgroundColor: '#088CDA',
+        paddingVertical: 12,
+        paddingHorizontal: 57,
+        borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: 40,
+    },
+    createPostButtonText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#fff',
+        letterSpacing: -0.2,
+    },
+    reorderHandle: {
+        width: 32,
+        height: 32,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 8,
+    },
+    placeCardDragging: {
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 8,
+        },
+        shadowOpacity: 0.3,
+        shadowRadius: 12,
+        elevation: 12,
+    },
+    editModeHint: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        backgroundColor: '#E3F2FD',
+        marginHorizontal: 21,
+        marginTop: 8,
+        borderRadius: 8,
+    },
+    editModeHintText: {
+        fontSize: 12,
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#088CDA',
+        fontWeight: '500',
+    },
+    customMarker: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#088CDA',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 3,
+        borderColor: '#fff',
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.3,
+        shadowRadius: 3,
+        elevation: 5,
+    },
+    markerNumber: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#fff',
+    },
+    sidePanelOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.3)',
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+    },
+    sidePanel: {
+        width: 280,
+        height: '100%',
+        backgroundColor: '#E0E0E0',
+    },
+    sidePanelHeader: {
+        backgroundColor: '#fff',
+        borderBottomWidth: 1,
+        borderBottomColor: '#E0E0E0',
+        height: 88,
+        justifyContent: 'flex-end',
+        paddingBottom: 8,
+        paddingLeft: 8,
+        paddingTop: 56,
+    },
+    sidePanelCloseButton: {
+        width: 24,
+        height: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    sidePanelContent: {
+        backgroundColor: '#fff',
+    },
+    sidePanelMenuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        padding: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#E0E0E0',
+    },
+    sidePanelMenuItemText: {
+        fontSize: 16,
+        fontWeight: '500',
+        lineHeight: 20,
+        letterSpacing: -0.2,
+        color: '#000',
+    },
+});
+

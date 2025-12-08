@@ -1,0 +1,427 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getApiBaseUrl } from './apiConfig';
+
+const API_BASE_URL = getApiBaseUrl();
+
+// JWT 토큰 만료 임박 기간 (Access Token은 1시간 만료이므로 5분 전에 리프레시)
+const TOKEN_REFRESH_THRESHOLD = 5 * 60 * 1000; // 5분을 밀리초로
+
+// JWT 디코딩 함수
+const decodeJWT = (token: string): any => {
+    try {
+        const parts = token.split('.');
+        if (parts.length !== 3) {
+            throw new Error('Invalid JWT format');
+        }
+
+        // Base64 URL 디코딩
+        const payload = parts[1];
+        const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(
+            atob(base64)
+                .split('')
+                .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+                .join('')
+        );
+
+        return JSON.parse(jsonPayload);
+    } catch (error) {
+        console.error('Failed to decode JWT:', error);
+        return null;
+    }
+};
+
+// JWT 토큰 만료 체크 함수
+const isTokenExpired = (token: string): boolean => {
+    try {
+        const decoded = decodeJWT(token);
+        if (!decoded || !decoded.exp) {
+            return true;
+        }
+
+        const expirationTime = decoded.exp * 1000; // JWT exp는 초 단위이므로 밀리초로 변환
+        const currentTime = Date.now();
+
+        return currentTime >= expirationTime;
+    } catch (error) {
+        console.error('Error checking token expiration:', error);
+        return true;
+    }
+};
+
+// JWT 토큰 만료 임박 체크 함수 (5분 이내 만료)
+const isTokenExpiringSoon = (token: string): boolean => {
+    try {
+        const decoded = decodeJWT(token);
+        if (!decoded || !decoded.exp) {
+            return false;
+        }
+
+        const expirationTime = decoded.exp * 1000;
+        const currentTime = Date.now();
+        const timeUntilExpiration = expirationTime - currentTime;
+
+        // 만료까지 남은 시간이 임계값보다 작으면 true
+        return timeUntilExpiration > 0 && timeUntilExpiration < TOKEN_REFRESH_THRESHOLD;
+    } catch (error) {
+        console.error('Error checking token expiration soon:', error);
+        return false;
+    }
+};
+
+export interface RegisterRequest {
+    email: string;
+    name: string;
+    username: string;
+    password: string;
+}
+
+export interface LoginRequest {
+    email: string;
+    password: string;
+}
+
+export interface LoginResponse {
+    accessToken: string;
+    refreshToken: string;
+    user: {
+        id: number;
+        email: string;
+        name: string;
+        username: string;
+        profileImageUrl?: string;
+    };
+}
+
+export interface RefreshTokenRequest {
+    refreshToken: string;
+}
+
+class AuthApi {
+    private accessToken: string | null = null;
+    private refreshToken: string | null = null;
+    private onTokenExpiredCallback: (() => void) | null = null;
+
+    // 토큰 갱신 락 (동시 갱신 방지)
+    private isRefreshing = false;
+    private refreshPromise: Promise<string> | null = null;
+
+    // 토큰 만료 콜백 등록
+    setOnTokenExpired(callback: (() => void) | null) {
+        this.onTokenExpiredCallback = callback;
+    }
+
+    // 토큰 초기화 (앱 시작시 호출)
+    async initializeTokens() {
+        try {
+            this.accessToken = await AsyncStorage.getItem('accessToken');
+            this.refreshToken = await AsyncStorage.getItem('refreshToken');
+        } catch (error) {
+            console.error('Failed to load tokens:', error);
+        }
+    }
+
+    // 토큰 유효성 체크 및 자동 갱신
+    // 반환값: true = 유효함, false = 만료됨 (로그아웃 필요)
+    async checkAndRefreshToken(): Promise<boolean> {
+        try {
+            if (!this.accessToken) {
+                return false;
+            }
+
+            // 토큰이 이미 만료되었는지 체크
+            if (isTokenExpired(this.accessToken)) {
+                // Refresh 토큰으로 갱신 시도
+                try {
+                    await this.refreshAccessToken();
+                    return true;
+                } catch (error) {
+                    console.error('Failed to refresh expired token:', error);
+                    return false;
+                }
+            }
+
+            // 토큰이 곧 만료될 예정인지 체크 (5분 이내)
+            if (isTokenExpiringSoon(this.accessToken)) {
+                // 백그라운드에서 갱신 (실패해도 현재 토큰은 유효하므로 true 반환)
+                try {
+                    await this.refreshAccessToken();
+                } catch (error) {
+                    console.error('Failed to refresh expiring token:', error);
+                }
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Error in checkAndRefreshToken:', error);
+            return false;
+        }
+    }
+
+    // 토큰 저장
+    private async saveTokens(accessToken: string, refreshToken: string) {
+        if (!accessToken || !refreshToken) {
+            throw new Error('토큰 정보가 올바르지 않습니다.');
+        }
+        this.accessToken = accessToken;
+        this.refreshToken = refreshToken;
+        try {
+            await AsyncStorage.setItem('accessToken', accessToken);
+            await AsyncStorage.setItem('refreshToken', refreshToken);
+        } catch (error) {
+            console.error('Failed to save tokens:', error);
+            throw error;
+        }
+    }
+
+    // 토큰 삭제
+    private async clearTokens() {
+        this.accessToken = null;
+        this.refreshToken = null;
+        try {
+            await AsyncStorage.removeItem('accessToken');
+            await AsyncStorage.removeItem('refreshToken');
+            await AsyncStorage.removeItem('userData');
+        } catch (error) {
+            console.error('Failed to clear tokens:', error);
+        }
+    }
+
+    // 사용자 데이터 저장
+    private async saveUserData(user: any) {
+        if (!user) {
+            throw new Error('사용자 정보가 올바르지 않습니다.');
+        }
+        try {
+            await AsyncStorage.setItem('userData', JSON.stringify(user));
+        } catch (error) {
+            console.error('Failed to save user data:', error);
+            throw error;
+        }
+    }
+
+    // 사용자 데이터 불러오기
+    async getUserData() {
+        try {
+            const userData = await AsyncStorage.getItem('userData');
+            return userData ? JSON.parse(userData) : null;
+        } catch (error) {
+            console.error('Failed to load user data:', error);
+            return null;
+        }
+    }
+
+    // 회원가입
+    async register(data: RegisterRequest): Promise<LoginResponse> {
+        try {
+            const response = await fetch(`${API_BASE_URL}/auth/register`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+            });
+
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.message || '회원가입에 실패했습니다.');
+            }
+
+            const result: LoginResponse = await response.json();
+
+            // 응답 검증
+            if (!result.accessToken || !result.refreshToken || !result.user) {
+                throw new Error('서버 응답이 올바르지 않습니다.');
+            }
+
+            await this.saveTokens(result.accessToken, result.refreshToken);
+            await this.saveUserData(result.user);
+            return result;
+        } catch (error) {
+            console.error('Register error:', error);
+            throw error;
+        }
+    }
+
+    // 로그인
+    async login(data: LoginRequest): Promise<LoginResponse> {
+        try {
+            const response = await fetch(`${API_BASE_URL}/auth/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+            });
+
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.message || '로그인에 실패했습니다.');
+            }
+
+            const result: LoginResponse = await response.json();
+
+            // 응답 검증
+            if (!result.accessToken || !result.refreshToken || !result.user) {
+                throw new Error('서버 응답이 올바르지 않습니다.');
+            }
+
+            await this.saveTokens(result.accessToken, result.refreshToken);
+            await this.saveUserData(result.user);
+            return result;
+        } catch (error) {
+            console.error('Login error:', error);
+            throw error;
+        }
+    }
+
+    // 로그아웃
+    async logout(): Promise<void> {
+        try {
+            if (this.accessToken) {
+                await fetch(`${API_BASE_URL}/auth/logout`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.accessToken}`,
+                    },
+                });
+            }
+        } catch (error) {
+            console.error('Logout error:', error);
+        } finally {
+            await this.clearTokens();
+        }
+    }
+
+    // 토큰 갱신 (락을 사용하여 동시 갱신 방지)
+    async refreshAccessToken(): Promise<string> {
+        // 이미 갱신 중이면 기존 Promise 반환 (중복 갱신 방지)
+        if (this.isRefreshing && this.refreshPromise) {
+            console.log('Token refresh already in progress, waiting...');
+            return this.refreshPromise;
+        }
+
+        // 갱신 시작
+        this.isRefreshing = true;
+        this.refreshPromise = this._doRefreshToken();
+
+        try {
+            const result = await this.refreshPromise;
+            return result;
+        } finally {
+            this.isRefreshing = false;
+            this.refreshPromise = null;
+        }
+    }
+
+    // 실제 토큰 갱신 로직 (private)
+    private async _doRefreshToken(): Promise<string> {
+        try {
+            if (!this.refreshToken) {
+                throw new Error('No refresh token available');
+            }
+
+            const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ refreshToken: this.refreshToken }),
+            });
+
+            if (!response.ok) {
+                throw new Error('Token refresh failed');
+            }
+
+            const result = await response.json();
+            await this.saveTokens(result.accessToken, result.refreshToken);
+            console.log('Token refreshed successfully');
+            return result.accessToken;
+        } catch (error) {
+            console.error('Token refresh error:', error);
+            await this.clearTokens();
+            throw error;
+        }
+    }
+
+    // 인증된 API 호출
+    async authenticatedFetch(url: string, options: RequestInit = {}, isFormData: boolean = false): Promise<Response> {
+        if (!this.accessToken) {
+            throw new Error('No access token available');
+        }
+
+        // 요청 전에 토큰 만료 체크 및 갱신
+        const isTokenValid = await this.checkAndRefreshToken();
+        if (!isTokenValid) {
+            await this.clearTokens();
+            // 토큰 만료 콜백 호출
+            this.onTokenExpiredCallback?.();
+            throw new Error('Token expired and refresh failed');
+        }
+
+        const headers: Record<string, string> = {
+            ...options.headers as Record<string, string>,
+            'Authorization': `Bearer ${this.accessToken}`,
+        };
+
+        // FormData가 아닐 때만 Content-Type을 설정 (FormData는 브라우저가 자동 설정)
+        if (!isFormData) {
+            headers['Content-Type'] = 'application/json';
+        }
+
+        let response = await fetch(url, { ...options, headers });
+
+        // 토큰이 만료되었으면 갱신 후 재시도 (추가 안전장치)
+        if (response.status === 401) {
+            try {
+                await this.refreshAccessToken();
+                headers.Authorization = `Bearer ${this.accessToken}`;
+                response = await fetch(url, { ...options, headers });
+            } catch (error) {
+                await this.clearTokens();
+                // 토큰 만료 콜백 호출
+                this.onTokenExpiredCallback?.();
+                throw error;
+            }
+        }
+
+        return response;
+    }
+
+    // 선택적 인증 API 호출 (토큰이 있으면 포함, 없으면 인증 없이 요청)
+    async optionalAuthFetch(url: string, options: RequestInit = {}, isFormData: boolean = false): Promise<Response> {
+        const headers: Record<string, string> = {
+            ...options.headers as Record<string, string>,
+        };
+
+        // FormData가 아닐 때만 Content-Type을 설정
+        if (!isFormData) {
+            headers['Content-Type'] = 'application/json';
+        }
+
+        // 토큰이 있으면 인증 헤더 추가
+        if (this.accessToken) {
+            // 토큰이 있으면 유효성 체크 후 추가
+            const isTokenValid = await this.checkAndRefreshToken();
+            if (isTokenValid && this.accessToken) {
+                headers['Authorization'] = `Bearer ${this.accessToken}`;
+            }
+        }
+
+        return fetch(url, { ...options, headers });
+    }
+
+    // 로그인 상태 확인
+    isAuthenticated(): boolean {
+        return !!this.accessToken;
+    }
+
+    // 액세스 토큰 가져오기
+    getAccessToken(): string | null {
+        return this.accessToken;
+    }
+}
+
+export const authApi = new AuthApi();
+

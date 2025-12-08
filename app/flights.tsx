@@ -1,0 +1,339 @@
+import React, { useCallback, useState } from 'react';
+import { View, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, Alert, RefreshControl } from 'react-native';
+import { Text } from 'react-native-paper';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useUser, type Flight } from '../src/context/UserContext';
+import FlightCard from '../components/FlightCard';
+
+export default function FlightsScreen() {
+    const { planId } = useLocalSearchParams<{ planId: string }>();
+    const insets = useSafeAreaInsets();
+    const { getFlightsByPlan, deleteFlight, updateFlight, toggleFlightLike } = useUser();
+    const [selectedFlightId, setSelectedFlightId] = useState<string | null>(null);
+    const [showActionModal, setShowActionModal] = useState(false);
+    const [flights, setFlights] = useState<Flight[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+
+    const loadFlights = useCallback(async () => {
+        if (!planId) {
+            setFlights([]);
+            return;
+        }
+
+        try {
+            setIsLoading(true);
+            const fetchedFlights = await getFlightsByPlan(planId);
+            setFlights(fetchedFlights);
+        } catch (error) {
+            console.error('Failed to load flights:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [planId, getFlightsByPlan]);
+
+    useFocusEffect(
+        useCallback(() => {
+            loadFlights();
+        }, [loadFlights])
+    );
+
+    const handleRefresh = async () => {
+        await loadFlights();
+    };
+
+    const handleBack = () => {
+        router.back();
+    };
+
+    const handleAddFlight = () => {
+        router.push({
+            pathname: '/register-flight-number',
+            params: { planId },
+        });
+    };
+
+    const handleMorePress = (flightId: string) => {
+        setSelectedFlightId(flightId);
+        setShowActionModal(true);
+    };
+
+    const handleToggleSelection = async () => {
+        if (!selectedFlightId) {
+            return;
+        }
+
+        try {
+            const targetFlight = flights.find((flight) => flight.id === selectedFlightId);
+            if (!targetFlight) {
+                return;
+            }
+
+            // 선택하려는 경우 (현재 선택되지 않은 상태)
+            if (!targetFlight.isSelected) {
+                // 같은 날짜에 이미 선택된 항공편이 있는지 확인
+                const targetDate = new Date(targetFlight.departureTime).toDateString();
+                const conflictingFlight = flights.find((flight) => {
+                    if (flight.id === selectedFlightId) return false; // 자기 자신 제외
+                    if (!flight.isSelected) return false; // 선택되지 않은 항공편 제외
+
+                    const flightDate = new Date(flight.departureTime).toDateString();
+                    return flightDate === targetDate;
+                });
+
+                if (conflictingFlight) {
+                    Alert.alert(
+                        '항공편 선택 불가',
+                        `같은 날짜(${new Date(targetFlight.departureTime).toLocaleDateString('ko-KR', {
+                            month: 'long',
+                            day: 'numeric'
+                        })})에 이미 선택된 항공편이 있습니다.\n\n선택된 항공편: ${conflictingFlight.airline} ${conflictingFlight.flightNumber}\n\n다른 항공편을 선택하려면 먼저 기존 항공편의 선택을 해제해주세요.`,
+                        [{ text: '확인' }]
+                    );
+                    setShowActionModal(false);
+                    setSelectedFlightId(null);
+                    return;
+                }
+            }
+
+            await updateFlight(selectedFlightId, {
+                isSelected: !targetFlight.isSelected,
+            });
+
+            await loadFlights();
+        } catch (error) {
+            console.error('Failed to toggle flight selection:', error);
+            Alert.alert('오류', '선택 상태 변경에 실패했습니다.');
+        } finally {
+            setShowActionModal(false);
+            setSelectedFlightId(null);
+        }
+    };
+
+    const handleDelete = () => {
+        if (!selectedFlightId) {
+            return;
+        }
+
+        setShowActionModal(false);
+        Alert.alert('삭제 확인', '항공편을 삭제하시겠습니까?', [
+            {
+                text: '취소',
+                style: 'cancel',
+                onPress: () => setSelectedFlightId(null),
+            },
+            {
+                text: '삭제',
+                style: 'destructive',
+                onPress: async () => {
+                    try {
+                        await deleteFlight(selectedFlightId);
+                        await loadFlights();
+                    } catch (error) {
+                        console.error('Failed to delete flight:', error);
+                        Alert.alert('오류', '항공편 삭제에 실패했습니다.');
+                    } finally {
+                        setSelectedFlightId(null);
+                    }
+                },
+            },
+        ]);
+    };
+
+    const handleLikePress = async (flightId: string) => {
+        if (!planId) return;
+
+        try {
+            const result = await toggleFlightLike(planId, flightId);
+            // 로컬 상태 업데이트
+            setFlights((prev) =>
+                prev.map((flight) =>
+                    flight.id === flightId
+                        ? { ...flight, isLiked: result.isLiked, likes: result.likeCount, likedBy: result.likedBy }
+                        : flight
+                )
+            );
+        } catch (error) {
+            console.error('Failed to toggle flight like:', error);
+            const errorMessage = error instanceof Error ? error.message : '좋아요 처리에 실패했습니다.';
+            Alert.alert('오류', errorMessage);
+        }
+    };
+
+    const selectedFlight = flights.find((f) => f.id === selectedFlightId);
+    const isFlightSelected = selectedFlight?.isSelected || false;
+
+    return (
+        <View style={styles.container}>
+            {/* 상단바 */}
+            <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+                <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+                    <Feather name="arrow-left" size={24} color="#000" />
+                </TouchableOpacity>
+                <Text style={styles.headerTitle}>항공편</Text>
+            </View>
+
+            <ScrollView
+                style={styles.content}
+                showsVerticalScrollIndicator={false}
+                refreshControl={<RefreshControl refreshing={isLoading} onRefresh={handleRefresh} />}
+            >
+                {/* 항공편 추가 버튼 */}
+                <TouchableOpacity style={styles.addButton} onPress={handleAddFlight}>
+                    <Feather name="plus" size={16} color="#000" />
+                    <Text style={styles.addButtonText}>항공편 추가</Text>
+                </TouchableOpacity>
+
+                {/* 항공편 목록 */}
+                {flights.length === 0 ? (
+                    <View style={styles.emptyContainer}>
+                        <Text style={styles.emptyText}>등록된 항공편이 없습니다.</Text>
+                        <Text style={styles.emptySubText}>항공편을 추가해주세요.</Text>
+                    </View>
+                ) : (
+                    <View style={styles.flightsList}>
+                        {flights.map((flight) => (
+                            <FlightCard
+                                key={flight.id}
+                                flight={flight}
+                                onMorePress={() => handleMorePress(flight.id)}
+                                onLikePress={() => handleLikePress(flight.id)}
+                            />
+                        ))}
+                    </View>
+                )}
+            </ScrollView>
+
+            {/* 액션 모달 */}
+            <Modal visible={showActionModal} transparent animationType="fade">
+                <TouchableOpacity
+                    style={styles.modalOverlay}
+                    activeOpacity={1}
+                    onPress={() => setShowActionModal(false)}
+                >
+                    <View style={styles.bottomSheet}>
+                        <TouchableOpacity style={styles.actionButton} onPress={handleToggleSelection}>
+                            <Text style={styles.actionButtonText}>
+                                {isFlightSelected ? '선택 해제하기' : '선택하기'}
+                            </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.deleteButton} onPress={handleDelete}>
+                            <Text style={styles.deleteButtonText}>삭제하기</Text>
+                        </TouchableOpacity>
+                    </View>
+                </TouchableOpacity>
+            </Modal>
+        </View>
+    );
+}
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: '#fff',
+    },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingBottom: 8,
+        paddingHorizontal: 16,
+        position: 'relative',
+    },
+    backButton: {
+        position: 'absolute',
+        left: 16,
+        top: Platform.OS === 'ios' ? 56 : 24,
+        width: 24,
+        height: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    headerTitle: {
+        fontSize: 16,
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        fontWeight: '600',
+        color: '#000',
+    },
+    content: {
+        flex: 1,
+        paddingHorizontal: 20,
+    },
+    addButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        alignSelf: 'flex-end',
+        backgroundColor: '#ECECEC',
+        borderRadius: 16,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        height: 24,
+        marginTop: 16,
+        marginBottom: 32,
+    },
+    addButtonText: {
+        fontSize: 12,
+        lineHeight: 16,
+        letterSpacing: -0.15,
+        color: '#000',
+    },
+    flightsList: {
+        paddingBottom: 32,
+    },
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 80,
+    },
+    emptyText: {
+        fontSize: 16,
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#585858',
+        marginBottom: 8,
+    },
+    emptySubText: {
+        fontSize: 14,
+        lineHeight: 20,
+        letterSpacing: -0.15,
+        color: '#B0B0B0',
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'flex-end',
+    },
+    bottomSheet: {
+        backgroundColor: '#fff',
+        borderTopLeftRadius: 16,
+        borderTopRightRadius: 16,
+        paddingBottom: Platform.OS === 'ios' ? 34 : 16,
+    },
+    actionButton: {
+        paddingVertical: 16,
+        paddingHorizontal: 20,
+        borderBottomWidth: 1,
+        borderBottomColor: '#ECECEC',
+    },
+    actionButtonText: {
+        fontSize: 16,
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#088CDA',
+    },
+    deleteButton: {
+        paddingVertical: 16,
+        paddingHorizontal: 20,
+    },
+    deleteButtonText: {
+        fontSize: 16,
+        lineHeight: 24,
+        letterSpacing: -0.2,
+        color: '#FF3B30',
+    },
+});
+
